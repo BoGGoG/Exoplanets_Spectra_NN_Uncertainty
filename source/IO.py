@@ -6,13 +6,20 @@ import numpy as np
 import pandas as pd
 
 
-def load_spectra(data_dir: Path, verbose: bool = True):
+def load_spectra(data_dir: Path, verbose: bool = True, nrows: int = None) -> dict:
+    """
+    Assumes the following structure:
+    -data_dir/
+        -labels.csv
+        -spectra.csv
+        -wavelengths.npy
+    """
     path_labels = data_dir / "labels.csv"
     path_spectra = data_dir / "spectra.csv"
     path_wavelengths = data_dir / "wavelengths.npy"
 
-    spectra = pd.read_csv(path_spectra, index_col=0)
-    labels = pd.read_csv(path_labels)
+    spectra = pd.read_csv(path_spectra, index_col=0, nrows=nrows)
+    labels = pd.read_csv(path_labels, nrows=nrows)
     wavelengths = np.load(path_wavelengths)
 
     print(f"Loaded spectra with shape: {spectra.shape}")
