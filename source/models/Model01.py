@@ -300,41 +300,52 @@ class Model_01_Lit(L.LightningModule):
             [x["sigmas2_pred"] for x in self.test_step_outputs], dim=0
         )
 
-        figs = []
-        loss_f = torch.nn.MSELoss(reduction="none")
-        indiv_losses_per_var = loss_f(y, y_pred)
-        indiv_losses = indiv_losses_per_var.mean(dim=1).detach().cpu().numpy()
-        indiv_losses_per_var = indiv_losses_per_var.detach().cpu().numpy()
-
-        # histogram of individual losses
-        fig, ax = plt.subplots(figsize=(10, 5))
-        plt.hist(indiv_losses, bins=50)
-        plt.xlabel("Loss")
-        plt.ylabel("Count")
-        plt.title("Histogram of Individual Losses")
-        self.logger.experiment.add_figure("indiv_losses_hist", fig)
-        plt.close(fig)
-
-        # for each variable, plot the loss histogram
-        n_vars = y.shape[1]
-        fig, axs = plt.subplots(n_vars, 1, figsize=(5, 3 * n_vars))
-        for i in range(n_vars):
-            axs[i].hist(
-                indiv_losses_per_var[:, i],
-                bins=100,
-                label=f"{self.labels_names[i] if self.labels_names else i}",
-            )
-            axs[i].set_xlabel("Loss")
-            axs[i].set_ylabel("Count")
-            axs[i].legend()
-        plt.suptitle("Histogram of Individual Losses per Variable")
-        plt.tight_layout()
-        self.logger.experiment.add_figure("indiv_losses_per_var_hist", fig)
+        nllloss_f_indiv = NLLLossMultivariate(reduction=None)
+        nllloss_f_mean = NLLLossMultivariate(reduction="mean")
+        indiv_nllosses = nllloss_f_indiv(y_pred, sigmas2_pred, y)
+        indiv_nllosses_per_variable = nllloss_f_indiv(y_pred, sigmas2_pred, y)
+        lossf_mse = torch.nn.MSELoss(reduction="none")
+        indiv_mse_per_var = lossf_mse(y, y_pred)
+        indiv_rmse = torch.sqrt(indiv_mse_per_var.mean(dim=1)).detach().cpu().numpy()
+        indiv_rmse_per_var = torch.sqrt(indiv_mse_per_var).detach().cpu().numpy()
+        plot_indiv_losses_hists(self, indiv_rmse, lossname="RMSE")
+        plot_indiv_losses_hists_per_variable(self, indiv_rmse_per_var, lossname="RMSE")
 
     def configure_optimizers(self):
         """ToDo: Scheduler"""
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
+
+
+def plot_indiv_losses_hists(model, indiv_losses, lossname="Loss"):
+    # histogram of individual losses
+    fig, ax = plt.subplots(figsize=(10, 5))
+    plt.hist(indiv_losses, bins=50)
+    plt.xlabel(lossname)
+    plt.ylabel("Count")
+    plt.title("Histogram of Individual Losses")
+    model.logger.experiment.add_figure(f"indiv_{lossname}_hist", fig)
+    plt.close(fig)
+
+
+def plot_indiv_losses_hists_per_variable(model, indiv_losses_per_var, lossname="Loss"):
+    # for each variable, plot the loss histogram
+    n_vars = indiv_losses_per_var.shape[1]
+    fig, axs = plt.subplots(n_vars, 1, figsize=(8, 3 * n_vars))
+    for i in range(n_vars):
+        axs[i].hist(
+            indiv_losses_per_var[:, i],
+            bins=100,
+            label=f"{model.labels_names[i] if model.labels_names else i}",
+        )
+        axs[i].set_xlabel(lossname if i == n_vars - 1 else "")
+        axs[i].set_ylabel("Count")
+        axs[i].legend(fontsize="large")
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    plt.suptitle("Histogram of Individual Losses per Variable")
+    model.logger.experiment.add_figure(f"indiv_{lossname}_per_var_hist", fig)
+    plt.close(fig)
 
 
 def test_NLLLoss():
