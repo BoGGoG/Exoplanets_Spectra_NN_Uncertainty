@@ -6,6 +6,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from lightning.pytorch.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+    StochasticWeightAveraging,
+)
 from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
@@ -81,22 +87,23 @@ class Model_01(nn.Module):
         self.out_features = hparams["n_out_features"]
 
         current_dim = self.in_length
-        fc_hidden_dims = [50, 50]
+        fc_hidden_dims = [100, 30]
         self.fc = nn.Sequential()
+        self.act = nn.ELU()
         for i, hidden_dim in enumerate(fc_hidden_dims):
             self.fc.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
-            self.fc.add_module(f"fc_{i}_act", nn.ReLU())
+            self.fc.add_module(f"fc_{i}_act", self.act)
             self.fc.add_module(f"fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
         last_fc_layer_dim = current_dim
         # self.fc.add_module(f"fc_last", nn.Linear(current_dim, self.out_features))
 
         self.mus_model = nn.Sequential()
-        mus_model_dims = [20]
+        mus_model_dims = [100, 100]
         current_dim = last_fc_layer_dim
         for i, hidden_dim in enumerate(mus_model_dims):
             self.mus_model.add_module(f"mus_fc_{i}", nn.Linear(current_dim, hidden_dim))
-            self.mus_model.add_module(f"mus_fc_{i}_act", nn.ReLU())
+            self.mus_model.add_module(f"mus_fc_{i}_act", self.act)
             self.mus_model.add_module(f"mus_fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
         self.mus_model.add_module(
@@ -104,13 +111,13 @@ class Model_01(nn.Module):
         )
 
         self.sigmas_model = nn.Sequential()
-        sigmas_model_dims = [20]
+        sigmas_model_dims = [100, 20]
         current_dim = last_fc_layer_dim
         for i, hidden_dim in enumerate(sigmas_model_dims):
             self.sigmas_model.add_module(
                 f"sigmas_fc_{i}", nn.Linear(current_dim, hidden_dim)
             )
-            self.sigmas_model.add_module(f"sigmas_fc_{i}_act", nn.ReLU())
+            self.sigmas_model.add_module(f"sigmas_fc_{i}_act", self.act)
             self.sigmas_model.add_module(f"sigmas_fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
         self.sigmas_model.add_module(
@@ -294,11 +301,17 @@ class Model_01_Lit(L.LightningModule):
         return loss
 
     def on_test_epoch_end(self):
-        x = torch.cat([x["x"] for x in self.test_step_outputs], dim=0)
-        y = torch.cat([x["y"] for x in self.test_step_outputs], dim=0)
-        y_pred = torch.cat([x["y_pred"] for x in self.test_step_outputs], dim=0)
-        sigmas2_pred = torch.cat(
-            [x["sigmas2_pred"] for x in self.test_step_outputs], dim=0
+        x = torch.cat([x["x"] for x in self.test_step_outputs], dim=0).detach().cpu()
+        y = torch.cat([x["y"] for x in self.test_step_outputs], dim=0).detach().cpu()
+        y_pred = (
+            torch.cat([x["y_pred"] for x in self.test_step_outputs], dim=0)
+            .detach()
+            .cpu()
+        )
+        sigmas2_pred = (
+            torch.cat([x["sigmas2_pred"] for x in self.test_step_outputs], dim=0)
+            .detach()
+            .cpu()
         )
 
         nllloss_f_indiv = NLLLossMultivariate(reduction=None)
@@ -315,11 +328,79 @@ class Model_01_Lit(L.LightningModule):
         plot_indiv_losses_hists_per_variable(
             self, indiv_nllosses_per_variable, lossname="NLL"
         )
+        plot_std_vs_pred_std(model, y, y_pred, sigmas2_pred)
 
     def configure_optimizers(self):
         """ToDo: Scheduler"""
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, factor=0.5, patience=5
+        )
+        lr_scheduler_dic = {
+            "scheduler": scheduler,
+            "monitor": "losses/val_loss",
+            "frequency": 1,
+        }
+        out_dict = {
+            "optimizer": optimizer,
+            "lr_scheduler": lr_scheduler_dic,
+        }
+        return out_dict
+
+
+def plot_std_vs_pred_std(model, y_test, y_pred, sigmas2_pred):
+    y_test = y_test.detach().cpu().numpy()
+    y_pred = y_pred.detach().cpu().numpy()
+    sigmas2_pred = sigmas2_pred.detach().cpu().numpy()
+    n_vars = y_test.shape[1]
+
+    fig, axs = plt.subplots(n_vars, 1, figsize=(8, 3 * n_vars))
+
+    for i_pred_var in range(n_vars):
+        bins = np.linspace(min(y_test[:, i_pred_var]), max(y_test[:, i_pred_var]), 50)
+        bin_stds = []
+        bin_sigmas = []
+        bin_errors = []
+        diffs = y_test[:, i_pred_var] - y_pred[:, i_pred_var]
+        for i in range(len(bins) - 1):
+            bin_mask = (y_test[:, i_pred_var] >= bins[i]) & (
+                y_test[:, i_pred_var] < bins[i + 1]
+            )
+            if np.any(bin_mask):
+                bin_sigmas.append(np.mean(sigmas2_pred[bin_mask, i_pred_var]))
+                bin_stds.append(np.std(diffs[bin_mask]))
+            else:
+                bin_stds.append(np.nan)
+                bin_sigmas.append(np.nan)
+        bin_stds = np.array(bin_stds)
+        bin_sigmas = np.array(bin_sigmas)
+
+        plt.sca(axs[i_pred_var])
+        var_name = (
+            model.labels_names[i_pred_var]
+            if model.labels_names
+            else f"variable_{i_pred_var}"
+        )
+        plt.scatter(
+            bins[:-1], bin_stds, label=f"True Std {var_name}", color="blue", marker="o"
+        )
+        plt.scatter(
+            bins[:-1],
+            bin_sigmas,
+            label=f"Predicted Std {var_name}",
+            color="orange",
+            marker="x",
+        )
+        plt.xlabel("True Values")
+        plt.ylabel("Standard Deviation")
+        plt.grid()
+        plt.legend()
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    plt.suptitle("Errors vs Sigma Predictions")
+
+    model.logger.experiment.add_figure(f"std_vs_pred_std_indiv_variables", fig)
+    plt.close(fig)
 
 
 def plot_indiv_losses_hists(model, indiv_losses, lossname="Loss"):
@@ -370,7 +451,7 @@ def test_NLLLoss():
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 5_000
+    n_load = -1
 
     hparams = {
         "data_dir": data_dir / "train_test_split",
@@ -386,11 +467,13 @@ if __name__ == "__main__":
         lit_logdir, name="Model_01", default_hp_metric=False, log_graph=True
     )
     model = Model_01_Lit(hparams)
+    callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
-        max_epochs=10,
+        max_epochs=100,
         accelerator="auto",
         devices=1,
         logger=logger,
+        callbacks=callbacks,
     )
     trainer.fit(model)
     trainer.test(model)
