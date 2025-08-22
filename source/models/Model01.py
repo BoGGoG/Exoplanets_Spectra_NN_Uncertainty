@@ -38,8 +38,9 @@ class NLLLossMultivariate:
     Negative Log Likelihood with uncertainty estimation for multivariate regression.
     """
 
-    def __init__(self, reduction: str = "mean"):
+    def __init__(self, reduction: str = "mean", alpha: float = 1.0):
         self.reduction = reduction
+        self.alpha = alpha
 
     def forward(self, y_pred, sigmas2_pred, y_true):
         """
@@ -54,7 +55,7 @@ class NLLLossMultivariate:
         assert y_pred.shape == sigmas2_pred.shape == y_true.shape
         eps = 1e-8  # small value to avoid log(0)
 
-        losses = 0.5 * torch.log(sigmas2_pred + eps) + 0.5 * (
+        losses = 0.5 * torch.log(sigmas2_pred + eps) + self.alpha * 0.5 * (
             (y_true - y_pred) ** 2
         ) / (sigmas2_pred + eps)
         if self.reduction == "mean":
@@ -87,11 +88,12 @@ class Model_01(nn.Module):
         self.out_features = hparams["n_out_features"]
 
         current_dim = self.in_length
-        fc_hidden_dims = [100, 30]
+        fc_hidden_dims = [300, 200]
         self.fc = nn.Sequential()
         self.act = nn.ELU()
         for i, hidden_dim in enumerate(fc_hidden_dims):
             self.fc.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
             self.fc.add_module(f"fc_{i}_act", self.act)
             self.fc.add_module(f"fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
@@ -99,10 +101,11 @@ class Model_01(nn.Module):
         # self.fc.add_module(f"fc_last", nn.Linear(current_dim, self.out_features))
 
         self.mus_model = nn.Sequential()
-        mus_model_dims = [100, 100]
+        mus_model_dims = [200, 200]
         current_dim = last_fc_layer_dim
         for i, hidden_dim in enumerate(mus_model_dims):
             self.mus_model.add_module(f"mus_fc_{i}", nn.Linear(current_dim, hidden_dim))
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
             self.mus_model.add_module(f"mus_fc_{i}_act", self.act)
             self.mus_model.add_module(f"mus_fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
@@ -111,12 +114,13 @@ class Model_01(nn.Module):
         )
 
         self.sigmas_model = nn.Sequential()
-        sigmas_model_dims = [100, 20]
+        sigmas_model_dims = [200, 200]
         current_dim = last_fc_layer_dim
         for i, hidden_dim in enumerate(sigmas_model_dims):
             self.sigmas_model.add_module(
                 f"sigmas_fc_{i}", nn.Linear(current_dim, hidden_dim)
             )
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
             self.sigmas_model.add_module(f"sigmas_fc_{i}_act", self.act)
             self.sigmas_model.add_module(f"sigmas_fc_{i}_dropout", nn.Dropout(0.1))
             current_dim = hidden_dim
@@ -451,7 +455,7 @@ def test_NLLLoss():
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = -1
+    n_load = None
 
     hparams = {
         "data_dir": data_dir / "train_test_split",
@@ -469,7 +473,7 @@ if __name__ == "__main__":
     model = Model_01_Lit(hparams)
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
-        max_epochs=100,
+        max_epochs=30,
         accelerator="auto",
         devices=1,
         logger=logger,
