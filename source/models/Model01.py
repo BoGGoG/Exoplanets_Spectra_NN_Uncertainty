@@ -6,8 +6,9 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from source.IO import load_spectra
+from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
+from source.IO import load_spectra
 
 
 class MeanStdNormalizer:
@@ -73,6 +74,8 @@ class Model_01_Lit(L.LightningModule):
         self.test_loader = None
         self.criterion = nn.MSELoss()
         self.scaler = StandardScaler()
+        self.test_step_outputs = []
+        self.labels_names = None
 
     def setup(self, stage=None):
         path_spectra_train = hparams["data_dir"] / "spectra_train.csv"
@@ -84,9 +87,9 @@ class Model_01_Lit(L.LightningModule):
             spectra_train = pd.read_csv(
                 path_spectra_train, index_col=0, nrows=hparams["n_load_train"]
             ).values
-            labels_train = pd.read_csv(
-                path_labels_train, nrows=hparams["n_load_train"]
-            ).values
+            labels_train = pd.read_csv(path_labels_train, nrows=hparams["n_load_train"])
+            self.labels_names = labels_train.columns.tolist()
+            labels_train = labels_train.values
             labels_train = self.scaler.fit_transform(labels_train)
             print(f"Loaded training spectra with shape: {spectra_train.shape}")
             print(f"Loaded training labels with shape: {labels_train.shape}")
@@ -153,18 +156,91 @@ class Model_01_Lit(L.LightningModule):
         out = self(x)
         loss = self.criterion(out, y)
         self.log(
-            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+            "losses/train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
         )
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        out = self(x)
+        loss = self.criterion(out, y)
+        self.log(
+            "losses/val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = self.criterion(y, y_hat)
+        self.log(
+            "test_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
+        )
+        out_dict = {
+            "x": x,
+            "y": y,
+            "y_hat": y_hat,
+        }
+        self.test_step_outputs.append(out_dict)
+        return loss
+
+    def on_test_epoch_end(self):
+        x = torch.cat([x["x"] for x in self.test_step_outputs], dim=0)
+        y = torch.cat([x["y"] for x in self.test_step_outputs], dim=0)
+        y_hat = torch.cat([x["y_hat"] for x in self.test_step_outputs], dim=0)
+
+        figs = []
+        loss_f = torch.nn.MSELoss(reduction="none")
+        indiv_losses_per_var = loss_f(y, y_hat)
+        indiv_losses = indiv_losses_per_var.mean(dim=1).detach().cpu().numpy()
+        indiv_losses_per_var = indiv_losses_per_var.detach().cpu().numpy()
+
+        # histogram of individual losses
+        fig, ax = plt.subplots(figsize=(10, 5))
+        plt.hist(indiv_losses, bins=50)
+        plt.xlabel("Loss")
+        plt.ylabel("Count")
+        plt.title("Histogram of Individual Losses")
+        self.logger.experiment.add_figure("indiv_losses_hist", fig)
+        plt.close(fig)
+
+        # for each variable, plot the loss histogram
+        n_vars = y.shape[1]
+        fig, axs = plt.subplots(n_vars, 1, figsize=(5, 3 * n_vars))
+        for i in range(n_vars):
+            axs[i].hist(
+                indiv_losses_per_var[:, i],
+                bins=100,
+                label=f"{self.labels_names[i] if self.labels_names else i}",
+            )
+            axs[i].set_xlabel("Loss")
+            axs[i].set_ylabel("Count")
+            axs[i].legend()
+        plt.suptitle("Histogram of Individual Losses per Variable")
+        plt.tight_layout()
+        self.logger.experiment.add_figure("indiv_losses_per_var_hist", fig)
+
+        # self.logger.experiment.add_figure("peaks", figs)
+
     def configure_optimizers(self):
+        """ToDo: Scheduler"""
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 10_000
+    n_load = 1_000
 
     hparams = {
         "data_dir": data_dir / "train_test_split",
@@ -174,11 +250,17 @@ if __name__ == "__main__":
         "in_length": 50,
         "n_out_features": 6,
     }
+
+    lit_logdir = Path("lightning_logs") / "Model_01"
+    logger = TensorBoardLogger(
+        lit_logdir, name="Model_01", default_hp_metric=False, log_graph=True
+    )
     model = Model_01_Lit(hparams)
     trainer = L.Trainer(
-        max_epochs=50,
+        max_epochs=5,
         accelerator="auto",
         devices=1,
-        # logger=L.loggers.TensorBoardLogger("lightning_logs", name="Model_01"),
+        logger=logger,
     )
     trainer.fit(model)
+    trainer.test(model)
