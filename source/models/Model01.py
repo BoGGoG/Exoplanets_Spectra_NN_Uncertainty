@@ -51,10 +51,11 @@ class NLLLossMultivariate:
         losses = 0.5 * torch.log(sigmas2_pred + eps) + 0.5 * (
             (y_true - y_pred) ** 2
         ) / (sigmas2_pred + eps)
-        losses = losses.sum(dim=1)  # sum over output features
         if self.reduction == "mean":
+            losses = losses.sum(dim=1)  # sum over output features
             loss = losses.mean()
         elif self.reduction == "sum":
+            losses = losses.sum(dim=1)  # sum over output features
             loss = losses.sum()
         else:
             loss = losses  # no reduction
@@ -301,15 +302,19 @@ class Model_01_Lit(L.LightningModule):
         )
 
         nllloss_f_indiv = NLLLossMultivariate(reduction=None)
-        nllloss_f_mean = NLLLossMultivariate(reduction="mean")
-        indiv_nllosses = nllloss_f_indiv(y_pred, sigmas2_pred, y)
         indiv_nllosses_per_variable = nllloss_f_indiv(y_pred, sigmas2_pred, y)
+        indiv_nllosses = indiv_nllosses_per_variable.mean(dim=1).detach().cpu().numpy()
+        indiv_nllosses_per_variable = indiv_nllosses_per_variable.detach().cpu().numpy()
         lossf_mse = torch.nn.MSELoss(reduction="none")
         indiv_mse_per_var = lossf_mse(y, y_pred)
         indiv_rmse = torch.sqrt(indiv_mse_per_var.mean(dim=1)).detach().cpu().numpy()
         indiv_rmse_per_var = torch.sqrt(indiv_mse_per_var).detach().cpu().numpy()
         plot_indiv_losses_hists(self, indiv_rmse, lossname="RMSE")
         plot_indiv_losses_hists_per_variable(self, indiv_rmse_per_var, lossname="RMSE")
+        plot_indiv_losses_hists(self, indiv_nllosses, lossname="NLL")
+        plot_indiv_losses_hists_per_variable(
+            self, indiv_nllosses_per_variable, lossname="NLL"
+        )
 
     def configure_optimizers(self):
         """ToDo: Scheduler"""
