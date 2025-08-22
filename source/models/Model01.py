@@ -100,41 +100,41 @@ class Model_01(nn.Module):
         last_fc_layer_dim = current_dim
         # self.fc.add_module(f"fc_last", nn.Linear(current_dim, self.out_features))
 
-        self.mus_model = nn.Sequential()
-        mus_model_dims = [200, 200]
-        current_dim = last_fc_layer_dim
-        for i, hidden_dim in enumerate(mus_model_dims):
-            self.mus_model.add_module(f"mus_fc_{i}", nn.Linear(current_dim, hidden_dim))
-            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
-            self.mus_model.add_module(f"mus_fc_{i}_act", self.act)
-            self.mus_model.add_module(f"mus_fc_{i}_dropout", nn.Dropout(0.1))
-            current_dim = hidden_dim
-        self.mus_model.add_module(
-            f"mus_fc_last", nn.Linear(current_dim, self.out_features)
-        )
-
-        self.sigmas_model = nn.Sequential()
-        sigmas_model_dims = [200, 200]
-        current_dim = last_fc_layer_dim
-        for i, hidden_dim in enumerate(sigmas_model_dims):
-            self.sigmas_model.add_module(
-                f"sigmas_fc_{i}", nn.Linear(current_dim, hidden_dim)
-            )
-            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
-            self.sigmas_model.add_module(f"sigmas_fc_{i}_act", self.act)
-            self.sigmas_model.add_module(f"sigmas_fc_{i}_dropout", nn.Dropout(0.1))
-            current_dim = hidden_dim
-        self.sigmas_model.add_module(
-            f"sigmas_fc_last", nn.Linear(current_dim, self.out_features)
-        )
+        # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
+        self.feature_heads = nn.ModuleList()
+        feature_heads_dims = [200, 200]
+        for i in range(self.out_features):
+            feature_head = nn.Sequential()
+            current_dim = last_fc_layer_dim
+            for j, hidden_dim in enumerate(feature_heads_dims):
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
+                )
+                feature_head.add_module(f"feature_head_{i}_fc_{j}_act", self.act)
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(0.1)
+                )
+                current_dim = hidden_dim
+            feature_head.add_module(
+                f"feature_head_{i}_fc_last", nn.Linear(current_dim, 2)
+            )  # output mu and sigma^2
+            self.feature_heads.append(feature_head)
         self.softplus = nn.Softplus(beta=1.0, threshold=20.0)
 
     def forward(self, x):
         x = self.normalizer(x)
         x = self.fc(x)
-        mus = self.mus_model(x)
-        sigmas2 = self.sigmas_model(x)  # sigma^2
-        sigmas2 = self.softplus(sigmas2)  # ensure positive variance
+        feature_outputs = []
+        for feature_head in self.feature_heads:
+            feature_output = feature_head(x)
+            # apply softplus to the second output (sigma^2)
+            feature_outputs.append(feature_output)
+        mus = torch.stack(
+            [fo[:, 0] for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+        sigmas2 = torch.stack(
+            [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
 
         return {"mus": mus, "sigmas2": sigmas2}
 
@@ -153,7 +153,8 @@ class Model_01_Lit(L.LightningModule):
         self.train_loader = None
         self.val_loader = None
         self.test_loader = None
-        self.criterion = NLLLossMultivariate(reduction="mean")
+        self.alpha = 3.0
+        self.criterion = NLLLossMultivariate(reduction="mean", alpha=self.alpha)
         self.pred_criterion = nn.MSELoss(reduction="mean")
         self.scaler = StandardScaler()
         self.test_step_outputs = []
@@ -318,7 +319,7 @@ class Model_01_Lit(L.LightningModule):
             .cpu()
         )
 
-        nllloss_f_indiv = NLLLossMultivariate(reduction=None)
+        nllloss_f_indiv = NLLLossMultivariate(reduction=None, alpha=self.alpha)
         indiv_nllosses_per_variable = nllloss_f_indiv(y_pred, sigmas2_pred, y)
         indiv_nllosses = indiv_nllosses_per_variable.mean(dim=1).detach().cpu().numpy()
         indiv_nllosses_per_variable = indiv_nllosses_per_variable.detach().cpu().numpy()
