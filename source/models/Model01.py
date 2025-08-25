@@ -88,7 +88,7 @@ class Model_01(nn.Module):
         self.out_features = hparams["n_out_features"]
 
         current_dim = self.in_length
-        fc_hidden_dims = [300, 200]
+        fc_hidden_dims = [300, 300]
         self.fc = nn.Sequential()
         self.act = nn.ELU()
         for i, hidden_dim in enumerate(fc_hidden_dims):
@@ -139,21 +139,88 @@ class Model_01(nn.Module):
         return {"mus": mus, "sigmas2": sigmas2}
 
 
-class Model_01_Lit(L.LightningModule):
+class Model_02(nn.Module):
+    """
+    Multivariate regression model with GRU
+    Spectrum (1D tensor) -> GRU, MLP -> Output (1D tensor)
+    """
+
+    def __init__(self, hparams, verbose=False):
+        super(Model_02, self).__init__()
+        self.verbose = verbose
+        self.in_length = hparams["in_length"]
+        # self.normalizer = nn.LayerNorm(self.in_length)
+        self.normalizer = MeanStdNormalizer()
+        self.out_features = hparams["n_out_features"]
+
+        current_dim = self.in_length
+        fc_hidden_dims = [300, 300]
+        self.fc = nn.Sequential()
+        self.act = nn.ELU()
+        for i, hidden_dim in enumerate(fc_hidden_dims):
+            self.fc.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
+            self.fc.add_module(f"fc_{i}_act", self.act)
+            self.fc.add_module(f"fc_{i}_dropout", nn.Dropout(0.1))
+            current_dim = hidden_dim
+        last_fc_layer_dim = current_dim
+        # self.fc.add_module(f"fc_last", nn.Linear(current_dim, self.out_features))
+
+        # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
+        self.feature_heads = nn.ModuleList()
+        feature_heads_dims = [200, 200]
+        for i in range(self.out_features):
+            feature_head = nn.Sequential()
+            current_dim = last_fc_layer_dim
+            for j, hidden_dim in enumerate(feature_heads_dims):
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
+                )
+                feature_head.add_module(f"feature_head_{i}_fc_{j}_act", self.act)
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(0.1)
+                )
+                current_dim = hidden_dim
+            feature_head.add_module(
+                f"feature_head_{i}_fc_last", nn.Linear(current_dim, 2)
+            )  # output mu and sigma^2
+            self.feature_heads.append(feature_head)
+        self.softplus = nn.Softplus(beta=1.0, threshold=20.0)
+
+    def forward(self, x):
+        x = self.normalizer(x)
+        x = self.fc(x)
+        feature_outputs = []
+        for feature_head in self.feature_heads:
+            feature_output = feature_head(x)
+            # apply softplus to the second output (sigma^2)
+            feature_outputs.append(feature_output)
+        mus = torch.stack(
+            [fo[:, 0] for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+        sigmas2 = torch.stack(
+            [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+
+        return {"mus": mus, "sigmas2": sigmas2}
+
+
+class Model_Lit(L.LightningModule):
     """
     Lightning wrapper for Model_01.
     """
 
     def __init__(self, hparams, verbose=False):
-        super(Model_01_Lit, self).__init__()
-        self.model = Model_01(hparams, verbose=verbose)
+        super(Model_Lit, self).__init__()
+        self.model = hparams["model_class"](hparams, verbose=verbose)
+        self.alpha = 20.0
+        hparams["alpha"] = self.alpha
         self.save_hyperparameters(hparams)
         self.setup_performed_train = False
         self.setup_performed_test = False
         self.train_loader = None
         self.val_loader = None
         self.test_loader = None
-        self.alpha = 3.0
         self.criterion = NLLLossMultivariate(reduction="mean", alpha=self.alpha)
         self.pred_criterion = nn.MSELoss(reduction="mean")
         self.scaler = StandardScaler()
@@ -454,11 +521,15 @@ def test_NLLLoss():
     print("Loss with mean reduction:", loss_mean)
 
 
-if __name__ == "__main__":
+def train_model_01():
+    """
+    This function should just for for training a Model_01_Lit.
+    """
     data_dir = Path("data") / "cleaned_up_version"
     n_load = None
 
     hparams = {
+        "model_class": Model_01,
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load,
         "batch_size": 32,
@@ -474,7 +545,38 @@ if __name__ == "__main__":
     model = Model_01_Lit(hparams)
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
-        max_epochs=30,
+        max_epochs=200,
+        accelerator="auto",
+        devices=1,
+        logger=logger,
+        callbacks=callbacks,
+    )
+    trainer.fit(model)
+    trainer.test(model)
+
+
+if __name__ == "__main__":
+    data_dir = Path("data") / "cleaned_up_version"
+    n_load = None
+
+    hparams = {
+        "model_class": Model_01,
+        "data_dir": data_dir / "train_test_split",
+        "n_load_train": n_load,
+        "batch_size": 32,
+        "val_batch_size": 512,
+        "in_length": 50,
+        "n_out_features": 6,
+    }
+
+    lit_logdir = Path("lightning_logs") / "Model_01"
+    logger = TensorBoardLogger(
+        lit_logdir, name="Model_01", default_hp_metric=False, log_graph=True
+    )
+    model = Model_Lit(hparams)
+    callbacks = [LearningRateMonitor(logging_interval="step")]
+    trainer = L.Trainer(
+        max_epochs=200,
         accelerator="auto",
         devices=1,
         logger=logger,
