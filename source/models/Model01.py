@@ -15,6 +15,12 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
+from collections import namedtuple
+
+
+# model output as named tuple instead of dict, because of some logging issues with dicts
+# I think if one has self.example_input_array and wants to log the graph, it needs to be a tuple and not a dict
+ModelOutput = namedtuple("ModelOutput", ["mus", "sigmas2"])
 
 
 class MeanStdNormalizer:
@@ -136,7 +142,7 @@ class Model_01(nn.Module):
             [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
         )  # shape: [batch, n_out_features]
 
-        return {"mus": mus, "sigmas2": sigmas2}
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
 
 
 class Model_02(nn.Module):
@@ -214,7 +220,7 @@ class Model_02(nn.Module):
             [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
         )  # shape: [batch, n_out_features]
 
-        return {"mus": mus, "sigmas2": sigmas2}
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
 
 
 class CNNTimeSeriesRegressor(nn.Module):
@@ -330,7 +336,7 @@ class CNNTimeSeriesRegressor(nn.Module):
             [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
         )  # shape: [batch, n_out_features]
 
-        return {"mus": mus, "sigmas2": sigmas2}
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
 
 
 class Model_Lit(L.LightningModule):
@@ -340,7 +346,10 @@ class Model_Lit(L.LightningModule):
 
     def __init__(self, hparams, verbose=False):
         super(Model_Lit, self).__init__()
-        self.model = hparams["model_class"](hparams, verbose=verbose)
+
+        model_class = hparams["model_class"]
+        model_class = model_registry.get(model_class)
+        self.model = model_class(hparams, verbose=verbose)
         self.alpha = hparams["alpha"]
         self.save_hyperparameters(hparams)
         self.setup_performed_train = False
@@ -353,8 +362,11 @@ class Model_Lit(L.LightningModule):
         self.scaler = StandardScaler()
         self.test_step_outputs = []
         self.labels_names = None
+        self.model_history = []
+        # self.example_input_array = torch.randn(2, hparams["in_length"])
 
     def setup(self, stage=None):
+        hparams = self.hparams
         path_spectra_train = hparams["data_dir"] / "spectra_train.csv"
         path_labels_train = hparams["data_dir"] / "labels_train.csv"
         path_spectra_test = hparams["data_dir"] / "spectra_test.csv"
@@ -370,8 +382,6 @@ class Model_Lit(L.LightningModule):
             labels_train = self.scaler.fit_transform(labels_train)
             print(f"Loaded training spectra with shape: {spectra_train.shape}")
             print(f"Loaded training labels with shape: {labels_train.shape}")
-            print(f"{spectra_train[0:3]}")
-            print(f"{labels_train[0:3]}")
 
             spectra_train = torch.tensor(spectra_train, dtype=torch.float32)
             labels_train = torch.tensor(labels_train, dtype=torch.float32)
@@ -394,6 +404,7 @@ class Model_Lit(L.LightningModule):
                 batch_size=hparams["val_batch_size"],
                 shuffle=False,
                 drop_last=False,
+                num_workers=4,
             )
             self.setup_performed_train = True
 
@@ -414,6 +425,7 @@ class Model_Lit(L.LightningModule):
                 batch_size=hparams["val_batch_size"],
                 shuffle=False,
                 drop_last=False,
+                num_workers=4,
             )
             self.setup_performed_test = True
 
@@ -432,8 +444,8 @@ class Model_Lit(L.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         out = self(x)
-        y_pred = out["mus"]
-        sigma2_pred = out["sigmas2"]
+        y_pred = out._asdict()["mus"]
+        sigma2_pred = out._asdict()["sigmas2"]
 
         loss = self.criterion(y_pred, sigma2_pred, y)
         self.log(
@@ -449,8 +461,8 @@ class Model_Lit(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         out = self(x)
-        y_pred = out["mus"]
-        sigma2_pred = out["sigmas2"]
+        y_pred = out._asdict()["mus"]
+        sigma2_pred = out._asdict()["sigmas2"]
 
         loss = self.criterion(y_pred, sigma2_pred, y)
         pred_loss = self.pred_criterion(y_pred, y)
@@ -475,8 +487,8 @@ class Model_Lit(L.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y = batch
         out = self(x)
-        y_pred = out["mus"]
-        sigma2_pred = out["sigmas2"]
+        y_pred = out._asdict()["mus"]
+        sigma2_pred = out._asdict()["sigmas2"]
         loss = self.criterion(y_pred, sigma2_pred, y)
         pred_loss = self.pred_criterion(y_pred, y)
 
@@ -528,11 +540,11 @@ class Model_Lit(L.LightningModule):
         plot_indiv_losses_hists_per_variable(
             self, indiv_nllosses_per_variable, lossname="NLL"
         )
-        plot_std_vs_pred_std(model, y, y_pred, sigmas2_pred)
+        plot_std_vs_pred_std(self, y, y_pred, sigmas2_pred)
 
     def configure_optimizers(self):
         """ToDo: Scheduler"""
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams["lr"])
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, factor=0.5, patience=5
         )
@@ -649,6 +661,11 @@ def test_NLLLoss():
     print("Loss with mean reduction:", loss_mean)
 
 
+model_registry = {
+    "CNNTimeSeriesRegressor": CNNTimeSeriesRegressor,
+}
+
+
 def train_model_01():
     """
     This function should just for for training a Model_01_Lit.
@@ -671,6 +688,7 @@ def train_model_01():
     logger = TensorBoardLogger(
         lit_logdir, name="Model_01", default_hp_metric=False, log_graph=True
     )
+
     model = Model_01_Lit(hparams)
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
@@ -731,7 +749,7 @@ if __name__ == "__main__":
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load,
         "batch_size": 32,
-        "val_batch_size": 512,
+        "val_batch_size": 128,
         "in_length": 50,
         "n_out_features": 6,
         "in_channels": 1,

@@ -4,6 +4,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import configparser
+
+
+def read_config(file_path: str) -> configparser.ConfigParser:
+    config = configparser.ConfigParser(inline_comment_prefixes="#")
+    config.read(file_path)
+    return config
 
 
 def load_spectra(data_dir: Path, verbose: bool = True, nrows: int = None) -> dict:
