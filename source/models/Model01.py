@@ -241,6 +241,7 @@ class CNNTimeSeriesRegressor(nn.Module):
         self.act = nn.ELU()
         self.normalizer = MeanStdNormalizer()
         self.input_length = hparams["in_length"]
+        self.dropout_val = hparams["dropout"]
 
         layers = []
         channels = in_channels
@@ -252,14 +253,14 @@ class CNNTimeSeriesRegressor(nn.Module):
                     nn.Conv1d(
                         in_channels=channels,
                         out_channels=out_channels,
-                        kernel_size=7,
-                        stride=2,  # downsample
+                        kernel_size=hparams["cnn_enc_kernel_size"],
+                        stride=hparams["cnn_enc_stride"],  # downsample
                         padding=dilation * 3,
                         dilation=dilation,
                     ),
                     nn.BatchNorm1d(out_channels),
-                    nn.ReLU(inplace=True),
-                    nn.Dropout(0.1),
+                    nn.SiLU(inplace=True),
+                    nn.Dropout(self.dropout_val),
                 )
             )
             channels = out_channels
@@ -273,7 +274,7 @@ class CNNTimeSeriesRegressor(nn.Module):
             self.fc_encoder.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
             # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
             self.fc_encoder.add_module(f"fc_{i}_act", self.act)
-            self.fc_encoder.add_module(f"fc_{i}_dropout", nn.Dropout(0.1))
+            self.fc_encoder.add_module(f"fc_{i}_dropout", nn.Dropout(self.dropout_val))
             current_dim = hidden_dim
         # output same dimension as cnn_enc
         self.fc_encoder.add_module(f"fc_last", nn.Linear(current_dim, 2 * channels))
@@ -290,7 +291,7 @@ class CNNTimeSeriesRegressor(nn.Module):
                 )
                 feature_head.add_module(f"feature_head_{i}_fc_{j}_act", self.act)
                 feature_head.add_module(
-                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(0.1)
+                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(self.dropout_val)
                 )
                 current_dim = hidden_dim
             feature_head.add_module(
@@ -736,9 +737,12 @@ if __name__ == "__main__":
         "in_channels": 1,
         "num_blocks": 3,
         "base_channels": 32,
+        "cnn_enc_kernel_size": 7,
+        "cnn_enc_stride": 2,
         "fc_enc_hidden_dims": [300, 300],
         "feature_heads_dims": [300, 200],
         "alpha": 1.0,
+        "dropout": 0.1,
     }
 
     lit_logdir = Path("lightning_logs") / hparams["model_class"].__name__
