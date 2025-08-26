@@ -526,6 +526,11 @@ class Model_Lit(L.LightningModule):
             .cpu()
         )
 
+        # scale back to original values
+        y_pred = torch.tensor(self.scaler.inverse_transform(y_pred))
+        y = torch.tensor(self.scaler.inverse_transform(y))
+        sigmas2_pred = sigmas2_pred * (torch.tensor(self.scaler.scale_) ** 2)
+
         nllloss_f_indiv = NLLLossMultivariate(reduction=None, alpha=self.alpha)
         indiv_nllosses_per_variable = nllloss_f_indiv(y_pred, sigmas2_pred, y)
         indiv_nllosses = indiv_nllosses_per_variable.mean(dim=1).detach().cpu().numpy()
@@ -535,12 +540,19 @@ class Model_Lit(L.LightningModule):
         indiv_rmse = torch.sqrt(indiv_mse_per_var.mean(dim=1)).detach().cpu().numpy()
         indiv_rmse_per_var = torch.sqrt(indiv_mse_per_var).detach().cpu().numpy()
         plot_indiv_losses_hists(self, indiv_rmse, lossname="RMSE")
+        plot_indiv_losses_hists(
+            self, indiv_rmse, lossname="RMSE", y_scale="log", x_scale="log"
+        )
         plot_indiv_losses_hists_per_variable(self, indiv_rmse_per_var, lossname="RMSE")
+        plot_indiv_losses_hists_per_variable(
+            self, indiv_rmse_per_var, lossname="RMSE", y_scale="log", x_scale="log"
+        )
         plot_indiv_losses_hists(self, indiv_nllosses, lossname="NLL")
         plot_indiv_losses_hists_per_variable(
             self, indiv_nllosses_per_variable, lossname="NLL"
         )
         plot_std_vs_pred_std(self, y, y_pred, sigmas2_pred)
+        plot_indiv_values(self, y)
 
     def configure_optimizers(self):
         if hasattr(self, "external_optimizer") and hasattr(self, "external_scheduler"):
@@ -569,6 +581,27 @@ class Model_Lit(L.LightningModule):
             "lr_scheduler": lr_scheduler_dic,
         }
         return out_dict
+
+
+def plot_indiv_values(model, y_test):
+    """
+    For the individual variables, simply plot the histograms to get a sense of scale for them
+    """
+    n_vars = y_test.shape[1]
+    fig, ax = plt.subplots(n_vars, 1, figsize=(8, 3 * n_vars))
+    for i in range(n_vars):
+        ax[i].hist(y_test[:, i], bins=100, density=True)
+        var_name = model.labels_names[i] if model.labels_names else f"variable_{i}"
+        ax[i].set_title(f"Histogram of true values for {var_name}")
+        ax[i].set_xlabel(f"{var_name}")
+        ax[i].set_ylabel("Density")
+        ax[i].grid()
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    plt.suptitle("Histogram of True Values per Variable")
+
+    model.logger.experiment.add_figure(f"true_values_hist_per_variable", fig)
+    plt.close(fig)
 
 
 def plot_std_vs_pred_std(model, y_test, y_pred, sigmas2_pred):
@@ -614,7 +647,7 @@ def plot_std_vs_pred_std(model, y_test, y_pred, sigmas2_pred):
             color="orange",
             marker="x",
         )
-        plt.xlabel("True Values")
+        plt.xlabel(f"True Values of {var_name}")
         plt.ylabel("Standard Deviation")
         plt.grid()
         plt.legend()
@@ -626,34 +659,74 @@ def plot_std_vs_pred_std(model, y_test, y_pred, sigmas2_pred):
     plt.close(fig)
 
 
-def plot_indiv_losses_hists(model, indiv_losses, lossname="Loss"):
+def plot_indiv_losses_hists(
+    model,
+    indiv_losses,
+    lossname="Loss",
+    y_scale: str = "linear",
+    x_scale: str = "linear",
+):
     # histogram of individual losses
     fig, ax = plt.subplots(figsize=(10, 5))
-    plt.hist(indiv_losses, bins=50)
+    plt.hist(indiv_losses, bins=200, density=True)
+    plt.yscale(y_scale)
+    plt.xscale(x_scale)
     plt.xlabel(lossname)
     plt.ylabel("Count")
     plt.title("Histogram of Individual Losses")
-    model.logger.experiment.add_figure(f"indiv_{lossname}_hist", fig)
+    model.logger.experiment.add_figure(
+        f"{lossname}_hist_xscale_{x_scale}_yscale_{y_scale}", fig
+    )
     plt.close(fig)
 
 
-def plot_indiv_losses_hists_per_variable(model, indiv_losses_per_var, lossname="Loss"):
+def plot_indiv_losses_hists_per_variable(
+    model,
+    indiv_losses_per_var,
+    lossname="Loss",
+    y_scale: str = "linear",
+    x_scale: str = "linear",
+):
     # for each variable, plot the loss histogram
     n_vars = indiv_losses_per_var.shape[1]
+
+    ranges = [
+        [0, 100],  # T
+        [0, 0.6],  # X_H2O
+        [0, 0.25],  # X_CO2
+        [0, 0.8],  # X_CH4
+        [0, 0.2],  # X_CO
+        [0, 0.75],  # X_NH3
+    ]
+
     fig, axs = plt.subplots(n_vars, 1, figsize=(8, 3 * n_vars))
     for i in range(n_vars):
-        axs[i].hist(
-            indiv_losses_per_var[:, i],
-            bins=100,
-            label=f"{model.labels_names[i] if model.labels_names else i}",
-        )
+        if y_scale == "linear" and lossname == "RMSE":
+            axs[i].hist(
+                indiv_losses_per_var[:, i],
+                bins=200,
+                label=f"{model.labels_names[i] if model.labels_names else i}",
+                density=True,
+                range=ranges[i],
+            )
+        else:
+            axs[i].hist(
+                indiv_losses_per_var[:, i],
+                bins=200,
+                label=f"{model.labels_names[i] if model.labels_names else i}",
+                density=True,
+            )
+        axs[i].set_xscale(x_scale)
+        axs[i].set_yscale(y_scale)
         axs[i].set_xlabel(lossname if i == n_vars - 1 else "")
         axs[i].set_ylabel("Count")
         axs[i].legend(fontsize="large")
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
     plt.suptitle("Histogram of Individual Losses per Variable")
-    model.logger.experiment.add_figure(f"indiv_{lossname}_per_var_hist", fig)
+    model.logger.experiment.add_figure(
+        f"{lossname}_per_var_hist_xscale_{x_scale}_yscale_{y_scale}", fig
+    )
     plt.close(fig)
 
 
