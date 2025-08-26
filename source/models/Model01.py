@@ -543,7 +543,18 @@ class Model_Lit(L.LightningModule):
         plot_std_vs_pred_std(self, y, y_pred, sigmas2_pred)
 
     def configure_optimizers(self):
-        """ToDo: Scheduler"""
+        if hasattr(self, "external_optimizer") and hasattr(self, "external_scheduler"):
+            print(
+                f"Using external optimizer and scheduler in configure_optimizers: {self.external_optimizer}, {self.external_scheduler}"
+            )
+            return {
+                "optimizer": self.external_optimizer,
+                "lr_scheduler": {
+                    "scheduler": self.external_scheduler,
+                    "monitor": "val_loss",
+                    "frequency": 1,
+                },
+            }
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams["lr"])
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, factor=0.5, patience=5

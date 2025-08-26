@@ -20,7 +20,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.utilities.model_summary import ModelSummary
 
 from source.IO import read_config
-from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit
+from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
 
 torch.set_float32_matmul_precision("highest")  # or "high"
@@ -71,15 +71,15 @@ def continue_training_best_model(
     Same as retrain_best_model, but continue training from the best model path,
     possibly with more epochs and more data.
     """
-    model_class = config.get("CNNTimeSeriesRegressor", "model_class")
+    model_class = config.get("MODEL", "model_class")
     run_dir = config.get("DIRECTORIES", "rundir")
     model = Model_Lit.load_from_checkpoint(best_model_path)
     print("loaded model")
-    n_events = config.getint("CNNTimeSeriesRegressor", "n_events")
+    n_events = config.getint("MODEL", "n_events")
     n_events = n_events if n_events > 0 else None  # None = All
     model.hparams["n_load_train"] = n_events
     batch_size = config.getint(
-        "CNNTimeSeriesRegressor",
+        "MODEL",
         "batch_size_cont",
         fallback=model.hparams["batch_size"],
     )
@@ -90,16 +90,14 @@ def continue_training_best_model(
         )
     model.hparams["batch_size"] = batch_size
     model.batch_size = batch_size
-    model.hparams["epochs"] = config.getint("CNNTimeSeriesRegressor", "epochs")
-    model.num_events = (
-        num_events := config.getint("CNNTimeSeriesRegressor", "n_events")
-    )
+    model.hparams["epochs"] = config.getint("MODEL", "epochs")
+    model.num_events = (num_events := config.getint("MODEL", "n_events"))
     model.verbose = True
     model.data_dir = model.hparams["data_dir"]
-    model.lr = config.getfloat("CNNTimeSeriesRegressor", "lr")
+    model.lr = config.getfloat("MODEL", "lr")
 
-    swa_lr = config.getfloat("CNNTimeSeriesRegressor", "swa_lr")
-    swa_start = config.getint("CNNTimeSeriesRegressor", "swa_start")
+    swa_lr = config.getfloat("MODEL", "swa_lr")
+    swa_start = config.getint("MODEL", "swa_start")
     model.hparams["swa_lr"] = swa_lr
     model.hparams["swa_start"] = swa_start
     print("Modified hparams:")
@@ -134,11 +132,11 @@ def continue_training_best_model(
         "out",
         "final",
         "lightning_logs",
-        f"cont_{config.get('CNNTimeSeriesRegressor', 'model_class')}_{date.today().strftime('%Y-%m-%d')}",
+        f"cont_{config.get('MODEL', 'model_class')}_{date.today().strftime('%Y-%m-%d')}",
     )
     logger = TensorBoardLogger(
         lit_logdir,
-        name=config.get("CNNTimeSeriesRegressor", "model_class"),
+        name=config.get("MODEL", "model_class"),
         default_hp_metric=False,
         log_graph=True,
     )
@@ -163,20 +161,20 @@ def continue_training_best_model(
         pass
     trainer = L.Trainer(
         accelerator=config.get("GENERAL", "accelerator"),
-        max_epochs=config.getint("CNNTimeSeriesRegressor", "epochs"),
+        max_epochs=config.getint("MODEL", "epochs"),
         logger=logger,
         default_root_dir=os.path.join(
             run_dir,
             "out",
             "final",
             "models",
-            config.get("CNNTimeSeriesRegressor", "model_class"),
+            config.get("MODEL", "model_class"),
         ),
         callbacks=callbacks,
         gradient_clip_val=model.hparams["max_norm_clip"],
         precision=config.get("GENERAL", "precision"),
     )
-    if config.getboolean("CNNTimeSeriesRegressor", "compile"):
+    if config.getboolean("MODEL", "compile"):
         model.model = torch.compile(model.model)
     trainer.fit(model)  # , ckpt_path=best_model_path)
     trainer.test(model, ckpt_path=val_ckeckpoint.best_model_path)
@@ -203,7 +201,7 @@ def main():
     )
     args = parser.parse_args()
     config = read_config(args.config)
-    model_class = config["CNNTimeSeriesRegressor"]["model_class"]
+    model_class = config["MODEL"]["model_class"]
 
     run_dir = config["DIRECTORIES"]["rundir"]
     db_file_path = os.path.join(run_dir, "out", "final", "optuna", f"{model_class}.db")
@@ -219,19 +217,19 @@ def main():
         lit_logdir, name=model_class, default_hp_metric=False, log_graph=True
     )
     accelerator = config.get("GENERAL", "accelerator")
-    if config.get("CNNTimeSeriesRegressor", "use_pretrained").lower() != "false":
+    if config.get("MODEL", "use_pretrained").lower() != "false":
         print(
             "Using pretrained model from {}".format(
-                config.get("CNNTimeSeriesRegressor", "use_pretrained")
+                config.get("MODEL", "use_pretrained")
             )
         )
-        best_model_path = config.get("CNNTimeSeriesRegressor", "use_pretrained")
+        best_model_path = config.get("MODEL", "use_pretrained")
     else:
         print("Using best model from hyperopt")
         best_model_path = get_best_model_from_trials(
             study_name=model_class,
             storage=optuna_log_dir,
-            q=config.getfloat("CNNTimeSeriesRegressor", "q"),
+            q=config.getfloat("MODEL", "q"),
         )
     best_model_retrained_path, test_loss = continue_training_best_model(
         best_model_path,
@@ -243,7 +241,7 @@ def main():
         "out",
         "final",
         "models",
-        config.get("CNNTimeSeriesRegressor", "model_class"),
+        config.get("MODEL", "model_class"),
         "best_model_retrained_loss_{:.8f}.onxx".format(test_loss),
     )
     path_pt = os.path.join(
@@ -251,7 +249,7 @@ def main():
         "out",
         "final",
         "models",
-        config.get("CNNTimeSeriesRegressor", "model_class"),
+        config.get("MODEL", "model_class"),
         "best_model_retrained_loss_{:.8f}.pt".format(test_loss),
     )
     path_cpt = os.path.join(
@@ -259,14 +257,14 @@ def main():
         "out",
         "final",
         "models",
-        config.get("CNNTimeSeriesRegressor", "model_class"),
+        config.get("MODEL", "model_class"),
         "best_model_retrained_loss_{:.8f}.ckpt".format(test_loss),
     )
     if not os.path.exists(os.path.dirname(path_onnx)):
         os.makedirs(os.path.dirname(path_onnx))
-    model = model_registry[
-        config.get("CNNTimeSeriesRegressor", "model_class")
-    ].load_from_checkpoint(best_model_retrained_path)
+    model = model_registry[config.get("MODEL", "model_class")].load_from_checkpoint(
+        best_model_retrained_path
+    )
     shutil.copy(best_model_retrained_path, path_cpt)
     model.eval()
     torch.save(model.model, path_pt)
@@ -287,7 +285,7 @@ def main():
         path_onnx,  # where to save the model (can be a file or file-like object)
         export_params=True,  # store the trained parameter weights inside the model file
         opset_version=config.getint(
-            "CNNTimeSeriesRegressor", "opset_version_onnx"
+            "MODEL", "opset_version_onnx"
         ),  # the ONNX version to export the model to
         do_constant_folding=True,  # whether to execute constant folding for optimization
         input_names=["input"],  # the model's input names

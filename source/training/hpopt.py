@@ -22,7 +22,7 @@ from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit
 from source.IO import read_config
 
 
-torch.set_float32_matmul_precision("high")  # or medium/high/highest
+# torch.set_float32_matmul_precision("high")  # or medium/high/highest
 # ignore optuna UserWarning
 # import warnings
 # warnings.filterwarnings("ignore", category=UserWarning)
@@ -31,18 +31,18 @@ torch.set_float32_matmul_precision("high")  # or medium/high/highest
 def setup_CNNTimeSeriesRegressor_hparams(
     trial: optuna.trial.Trial, config: configparser.ConfigParser
 ) -> dict:
-    n_load_train = config.getint("CNNTimeSeriesRegressor", "n_events_hpopt")
-    epochs = config.getint("CNNTimeSeriesRegressor", "epochs_hpopt")
+    n_load_train = config.getint("MODEL", "n_events_hpopt")
+    epochs = config.getint("MODEL", "epochs_hpopt")
     rundir = config.get("DIRECTORIES", "rundir")
     data_dir = Path("data") / "cleaned_up_version"
 
-    max_norm_clip = config.getfloat("CNNTimeSeriesRegressor", "max_norm_clip")
+    max_norm_clip = config.getfloat("MODEL", "max_norm_clip")
 
     k_batchsize = trial.suggest_int(
         "k_batchsize", 3, 6
     )  # scale lr when scaling batchsize
     swa_lrs = 1e-5
-    swa_start = config.getint("CNNTimeSeriesRegressor", "swa_start_hpopt")
+    swa_start = config.getint("MODEL", "swa_start_hpopt")
     dropout_val = trial.suggest_categorical("dropout_val", [0.1, 0.3, 0.5])
     # activation = trial.suggest_categorical(
     #     "activation", ["relu", "elu", "gelu", "silu"]
@@ -64,7 +64,7 @@ def setup_CNNTimeSeriesRegressor_hparams(
             trial.suggest_int(f"feature_heads_dim_{i}", 50, 500, step=50)
         )
     hparams = {
-        "model_class": config.get("CNNTimeSeriesRegressor", "model_class"),
+        "model_class": config.get("MODEL", "model_class"),
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load_train,
         "batch_size": 2**k_batchsize,
@@ -79,7 +79,7 @@ def setup_CNNTimeSeriesRegressor_hparams(
         "cnn_enc_stride": cnn_enc_stride,
         "fc_enc_hidden_dims": fc_enc_hidden_dims,
         "feature_heads_dims": feature_heads_dims,
-        "alpha": config.getfloat("CNNTimeSeriesRegressor", "alpha"),
+        "alpha": config.getfloat("MODEL", "alpha"),
         "dropout": dropout_val,
         "swa_lrs": swa_lrs,
         "swa_start": swa_start,
@@ -107,7 +107,7 @@ class OptunaPruningCB(PyTorchLightningPruningCallback, L.pytorch.Callback):
 
 
 def setup_hparams(trial: optuna.trial.Trial, config: configparser.ConfigParser) -> dict:
-    model_class = config["CNNTimeSeriesRegressor"]["model_class"]
+    model_class = config["MODEL"]["model_class"]
 
     try:
         hparams_setup_func = model_hparams_registry[model_class]
@@ -143,7 +143,7 @@ def objective_(trial: optuna.trial.Trial, config) -> float:
         n_load_train: how many events to load
         epochs: how many epochs to train
     """
-    model_class = config.get("CNNTimeSeriesRegressor", "model_class")
+    model_class = config.get("MODEL", "model_class")
 
     rundir = config.get("DIRECTORIES", "rundir")
     hparams = setup_hparams(trial, config)
@@ -169,7 +169,7 @@ def objective_(trial: optuna.trial.Trial, config) -> float:
     callbacks = [val_ckeckpoint, lr_monitor, early_stopping, swa, pruner_cb]
     trainer = L.Trainer(
         accelerator=config.get("GENERAL", "accelerator"),
-        max_epochs=config.getint("CNNTimeSeriesRegressor", "epochs_hpopt"),
+        max_epochs=config.getint("MODEL", "epochs_hpopt"),
         max_steps=-1,
         logger=logger,
         default_root_dir=os.path.join(rundir, "out", "final", "models", model_class),
@@ -220,7 +220,7 @@ def objective_(trial: optuna.trial.Trial, config) -> float:
 def do_hp_optimization(config: configparser.ConfigParser) -> optuna.study.Study:
     # read config
     rundir = config["DIRECTORIES"]["rundir"]
-    model_class = config["CNNTimeSeriesRegressor"]["model_class"]
+    model_class = config["MODEL"]["model_class"]
     optuna_log_file = os.path.join(
         rundir, "out", "final", "optuna", f"{model_class}.db"
     )
@@ -251,8 +251,8 @@ def do_hp_optimization(config: configparser.ConfigParser) -> optuna.study.Study:
     catches = []
     study.optimize(
         Objective(config),
-        n_trials=config.getint("CNNTimeSeriesRegressor", "n_trials_hpopt"),
-        timeout=config.getint("CNNTimeSeriesRegressor", "timeout_hpopt"),
+        n_trials=config.getint("MODEL", "n_trials_hpopt"),
+        timeout=config.getint("MODEL", "timeout_hpopt"),
         catch=catches,
         show_progress_bar=True,
         # gc_after_trial=True,
