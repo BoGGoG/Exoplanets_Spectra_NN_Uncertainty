@@ -21,6 +21,7 @@ from collections import namedtuple
 # model output as named tuple instead of dict, because of some logging issues with dicts
 # I think if one has self.example_input_array and wants to log the graph, it needs to be a tuple and not a dict
 ModelOutput = namedtuple("ModelOutput", ["mus", "sigmas2"])
+torch.set_float32_matmul_precision("highest")  # or "high"
 
 
 activations = {
@@ -418,6 +419,17 @@ class Model_03(nn.Module):
             "sigma_predictor_softplus", nn.Softplus(beta=1.0, threshold=20.0)
         )
 
+    def reset_weights(self, generator=None):
+        """
+        Model_03 only has linear layers, so we can make this one easy
+        We will use kaiming_uniform
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, generator=generator, gain=1.0)
+                # nn.init.kaiming_uniform(m.weight, generator=generator, a=0, nonlinearity="relu")
+                nn.init.zeros_(m.bias)
+
     def forward(self, x):
         x = self.normalizer(x)
         encoding = self.fc(x)
@@ -645,9 +657,10 @@ class Model_Lit(L.LightningModule):
 
     def configure_optimizers(self):
         if hasattr(self, "external_optimizer") and hasattr(self, "external_scheduler"):
-            print(
-                f"Using external optimizer and scheduler in configure_optimizers: {self.external_optimizer}, {self.external_scheduler}"
-            )
+            if self.verbose:
+                print(
+                    f"Using external optimizer and scheduler in configure_optimizers: {self.external_optimizer}, {self.external_scheduler}"
+                )
             return {
                 "optimizer": self.external_optimizer,
                 "lr_scheduler": {
