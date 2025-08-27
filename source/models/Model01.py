@@ -23,6 +23,16 @@ from collections import namedtuple
 ModelOutput = namedtuple("ModelOutput", ["mus", "sigmas2"])
 
 
+activations = {
+    "relu": nn.ReLU(),
+    "elu": nn.ELU(),
+    "leaky_relu": nn.LeakyReLU(),
+    "tanh": nn.Tanh(),
+    "gelu": nn.GELU(),
+    "silu": nn.SiLU(),
+}
+
+
 class MeanStdNormalizer:
     """
     Subtracts the mean and divides by the standard deviation for each spectrum.
@@ -339,6 +349,85 @@ class CNNTimeSeriesRegressor(nn.Module):
         return ModelOutput(mus=mus, sigmas2=sigmas2)
 
 
+class Model_03(nn.Module):
+    """
+    Multivariate regression model:
+    Spectrum (1D tensor) -> MLP -> Output (1D tensor).
+    Slightly different architecture as motivated by Konstantin and Alex.
+    There is one model that predicts y and then one that gets y and the input and determines the uncertainty.
+    """
+
+    def __init__(self, hparams, verbose=False):
+        super(Model_03, self).__init__()
+        self.verbose = verbose
+        self.in_length = hparams["in_length"]
+        # self.normalizer = nn.LayerNorm(self.in_length)
+        self.normalizer = MeanStdNormalizer()
+        self.out_features = hparams["n_out_features"]
+        self.dropout_val = hparams["dropout"]
+        dp_val = self.dropout_val
+
+        current_dim = self.in_length
+        fc_hidden_dims = hparams["fc_enc_hidden_dims"]
+        self.fc = nn.Sequential()
+        self.act = activations[hparams["activation"]]
+        for i, hidden_dim in enumerate(fc_hidden_dims):
+            self.fc.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
+            self.fc.add_module(f"fc_{i}_act", self.act)
+            self.fc.add_module(f"fc_{i}_dropout", nn.Dropout(dp_val))
+            current_dim = hidden_dim
+        last_fc_layer_dim = current_dim
+        # self.fc.add_module(f"fc_last", nn.Linear(current_dim, self.out_features))
+
+        # y_predictor: take encoding and predict y
+        y_predictor_hidden_dims = hparams["y_predictor_hidden_dims"]
+        self.y_predictor = nn.Sequential()
+        current_dim = last_fc_layer_dim
+        for i, hidden_dim in enumerate(y_predictor_hidden_dims):
+            self.y_predictor.add_module(
+                f"y_predictor_fc_{i}", nn.Linear(current_dim, hidden_dim)
+            )
+            self.y_predictor.add_module(f"y_predictor_fc_{i}_act", self.act)
+            self.y_predictor.add_module(
+                f"y_predictor_fc_{i}_dropout", nn.Dropout(dp_val)
+            )
+            current_dim = hidden_dim
+        self.y_predictor.add_module(
+            "y_predictor_fc_last", nn.Linear(current_dim, self.out_features)
+        )
+
+        # sigma_predictor: take encoding and predicted y and predict sigma^2
+        input_dim_sigma = last_fc_layer_dim + self.out_features
+        current_dim = input_dim_sigma
+        sigma_predictor_hidden_dims = hparams["sigma_predictor_hidden_dims"]
+        self.sigma_predictor = nn.Sequential()
+        for i, hidden_dim in enumerate(sigma_predictor_hidden_dims):
+            self.sigma_predictor.add_module(
+                f"sigma_predictor_fc_{i}", nn.Linear(current_dim, hidden_dim)
+            )
+            self.sigma_predictor.add_module(f"sigma_predictor_fc_{i}_act", self.act)
+            self.sigma_predictor.add_module(
+                f"sigma_predictor_fc_{i}_dropout", nn.Dropout(dp_val)
+            )
+            current_dim = hidden_dim
+        self.sigma_predictor.add_module(
+            "sigma_predictor_fc_last", nn.Linear(current_dim, self.out_features)
+        )
+        self.sigma_predictor.add_module(
+            "sigma_predictor_softplus", nn.Softplus(beta=1.0, threshold=20.0)
+        )
+
+    def forward(self, x):
+        x = self.normalizer(x)
+        encoding = self.fc(x)
+        mus = self.y_predictor(encoding)
+        enc_sigma = torch.cat([encoding, mus], dim=1)
+        sigmas2 = self.sigma_predictor(enc_sigma)
+
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
+
+
 class Model_Lit(L.LightningModule):
     """
     Lightning wrapper for Model_01.
@@ -348,7 +437,7 @@ class Model_Lit(L.LightningModule):
         super(Model_Lit, self).__init__()
 
         model_class = hparams["model_class"]
-        model_class = model_registry.get(model_class)
+        model_class = model_registry[model_class]
         self.model = model_class(hparams, verbose=verbose)
         self.alpha = hparams["alpha"]
         self.save_hyperparameters(hparams)
@@ -747,6 +836,7 @@ def test_NLLLoss():
 
 model_registry = {
     "CNNTimeSeriesRegressor": CNNTimeSeriesRegressor,
+    "Model_03": Model_03,
 }
 
 

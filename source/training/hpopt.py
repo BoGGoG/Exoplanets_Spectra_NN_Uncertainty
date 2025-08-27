@@ -18,7 +18,7 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import TensorBoardLogger
 from optuna.integration import PyTorchLightningPruningCallback
 
-from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit
+from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, Model_03
 from source.IO import read_config
 
 
@@ -26,6 +26,66 @@ from source.IO import read_config
 # ignore optuna UserWarning
 # import warnings
 # warnings.filterwarnings("ignore", category=UserWarning)
+
+
+def setup_Model_03_hparams(
+    trial: optuna.trial.Trial, config: configparser.ConfigParser
+) -> dict:
+    n_load_train = config.getint("MODEL", "n_events_hpopt")
+    epochs = config.getint("MODEL", "epochs_hpopt")
+    rundir = config.get("DIRECTORIES", "rundir")
+    data_dir = Path("data") / "cleaned_up_version"
+
+    max_norm_clip = config.getfloat("MODEL", "max_norm_clip")
+
+    k_batchsize = trial.suggest_int(
+        "k_batchsize", 3, 6
+    )  # scale lr when scaling batchsize
+    swa_lrs = 1e-5
+    swa_start = config.getint("MODEL", "swa_start_hpopt")
+    dropout_val = trial.suggest_categorical("dropout_val", [0.1, 0.3, 0.5])
+    fc_enc_n_layers = trial.suggest_int("fc_enc_n_layers", 1, 4)
+    fc_enc_hidden_dims = []
+    for i in range(fc_enc_n_layers):
+        fc_enc_hidden_dims.append(trial.suggest_int(f"fc_enc_hidden_dim_{i}", 50, 500))
+    y_predictor_n_layers = trial.suggest_int("y_predictor_n_layers", 1, 4)
+    y_predictor_hidden_dims = []
+    for i in range(y_predictor_n_layers):
+        y_predictor_hidden_dims.append(
+            trial.suggest_int(f"y_predictor_hidden_dim_{i}", 20, 500)
+        )
+    sigma_predictor_n_layers = trial.suggest_int("sigma_predictor_n_layers", 1, 4)
+    sigma_predictor_hidden_dims = []
+    for i in range(sigma_predictor_n_layers):
+        sigma_predictor_hidden_dims.append(
+            trial.suggest_int(f"sigma_predictor_hidden_dim_{i}", 20, 500)
+        )
+    activation = trial.suggest_categorical(
+        "activation", ["relu", "leaky_relu", "elu", "gelu", "silu"]
+    )
+    #
+    hparams = {
+        "model_class": config.get("MODEL", "model_class"),
+        "data_dir": data_dir / "train_test_split",
+        "n_load_train": n_load_train,
+        "batch_size": 2**k_batchsize,
+        "val_batch_size": 512,
+        "in_length": 50,
+        "n_out_features": 6,
+        "in_channels": 1,
+        "lr": 1e-3 * (2**k_batchsize) / 32,  # scale lr with batch size
+        "alpha": config.getfloat("MODEL", "alpha"),
+        "dropout": dropout_val,
+        "swa_lrs": swa_lrs,
+        "swa_start": swa_start,
+        "max_norm_clip": max_norm_clip,
+        "fc_enc_hidden_dims": fc_enc_hidden_dims,
+        "y_predictor_hidden_dims": y_predictor_hidden_dims,
+        "sigma_predictor_hidden_dims": sigma_predictor_hidden_dims,
+        "activation": activation,
+    }
+
+    return hparams
 
 
 def setup_CNNTimeSeriesRegressor_hparams(
@@ -91,6 +151,7 @@ def setup_CNNTimeSeriesRegressor_hparams(
 
 model_hparams_registry = {
     "CNNTimeSeriesRegressor": setup_CNNTimeSeriesRegressor_hparams,
+    "Model_03": setup_Model_03_hparams,
 }
 
 
@@ -207,7 +268,7 @@ def objective_(trial: optuna.trial.Trial, config) -> float:
     logger.log_hyperparams(
         hparams_save,
         {
-            "losses/val_loss": best_val_loss,
+            # "losses/val_loss": best_val_loss,
             "losses/test_loss": trainer.callback_metrics.get(
                 "test_loss", torch.tensor(float("nan"))
             ).item(),
