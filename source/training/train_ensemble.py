@@ -82,10 +82,10 @@ def train_ensemble_of_models(
     run_dir = config.get("DIRECTORIES", "rundir")
     n_models = config.getint("ENSEMBLE", "n_ensemble_models")
 
-    lit_logdir_base = os.path.join(
+    out_dir = config.get("ENSEMBLE", "ensemble_savedir")
+    lit_logdir_base = out_dir or os.path.join(
         config.get("DIRECTORIES", "rundir"), "out", "ensemble"
     )
-
     # if lit_logdir exists, ask and delete it
     if os.path.exists(lit_logdir_base):
         input_str = input(f"Lit_logdir {lit_logdir_base} exists. Delete it? (y/n) ")
@@ -227,7 +227,7 @@ def train_ensemble_of_models(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Continue training best Exoplanets model from hyperopt",
+        description="Train an ensemble of models with the best hyperparameters found by hyperopt",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
                                     """),
@@ -242,17 +242,6 @@ def main():
     run_dir = config["DIRECTORIES"]["rundir"]
     db_file_path = os.path.join(run_dir, "out", "final", "optuna", f"{model_class}.db")
     optuna_log_dir = f"sqlite:///{db_file_path}"
-    lit_logdir = os.path.join(
-        run_dir,
-        "out",
-        "final",
-        "lightning_logs",
-        f"cont_{model_class}_{date.today().strftime('%Y-%m-%d')}",
-    )
-    logger = TensorBoardLogger(
-        lit_logdir, name=model_class, default_hp_metric=False, log_graph=True
-    )
-    accelerator = config.get("GENERAL", "accelerator")
     if config.get("MODEL", "use_pretrained").lower() != "false":
         print(
             "Using pretrained model from {}".format(
@@ -278,9 +267,14 @@ def main():
     print(losses)
 
     # save ensemble to disk
-    models_save_dir = os.path.join(
-        config.get("DIRECTORIES", "rundir"), "out", "ensemble", "models"
-    )
+
+    out_dir = config.get("ENSEMBLE", "ensemble_savedir")
+    if out_dir:
+        models_save_dir = out_dir / "models"
+    else:
+        models_save_dir = os.path.join(
+            config.get("DIRECTORIES", "rundir"), "out", "ensemble", "models"
+        )
     os.makedirs(os.path.join(models_save_dir, "pt"), exist_ok=True)
     os.makedirs(os.path.join(models_save_dir, "ckpt"), exist_ok=True)
 
@@ -299,7 +293,7 @@ def main():
         torch.save(model.model, path_pt)
         shutil.copy(ckpts[i], path_cpt)
 
-    prints("Ensemble models saved to disk:")
+    print("Ensemble models saved to disk:")
     print(*paths_pt, sep="\n")
     print(*paths_ckpt, sep="\n")
 
