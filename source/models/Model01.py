@@ -669,6 +669,7 @@ class Model_Lit(L.LightningModule):
         )
         plot_std_vs_pred_std(self, y, y_pred, sigmas2_pred)
         plot_indiv_values(self, y)
+        plot_errors_means_and_stds(self, y, y_pred, sigmas2_pred)
 
     def configure_optimizers(self):
         if hasattr(self, "external_optimizer") and hasattr(self, "external_scheduler"):
@@ -718,6 +719,87 @@ def plot_indiv_values(model, y_test):
     plt.suptitle("Histogram of True Values per Variable")
 
     model.logger.experiment.add_figure(f"true_values_hist_per_variable", fig)
+    plt.close(fig)
+
+
+def plot_errors_means_and_stds(model, y_test, y_pred, sigmas2_pred):
+    """
+    For each variable, calculate the MAE in in bins based on the true value of that variable.
+    Also calculate the mean predicted sigma in those bins and plot as error bar on the mean.
+    """
+    y_test = y_test.detach().cpu().numpy()
+    y_pred = y_pred.detach().cpu().numpy()
+    sigmas2_pred = sigmas2_pred.detach().cpu().numpy()
+    n_vars = y_test.shape[1]
+
+    fig, axs = plt.subplots(1, n_vars, figsize=(4 * n_vars, 5))
+
+    y_lims = [
+        [0, 2000],
+        [0, 3.0],
+        [0, 3.0],
+        [0, 3.0],
+        [0, 3.0],
+        [0, 3.0],
+        [0, 3.0],
+    ]
+    n_bins = 25
+
+    for i_pred_var in range(n_vars):
+        bins = np.linspace(
+            min(y_test[:, i_pred_var]), max(y_test[:, i_pred_var]), n_bins
+        )
+        bins_centers = 0.5 * (bins[:-1] + bins[1:])
+        bins_maes = []
+        bins_sigmas = []
+        diffs = np.abs(y_test[:, i_pred_var] - y_pred[:, i_pred_var])
+        for i in range(len(bins) - 1):
+            bin_mask = (y_test[:, i_pred_var] >= bins[i]) & (
+                y_test[:, i_pred_var] < bins[i + 1]
+            )
+            if np.any(bin_mask):
+                bins_sigmas.append(np.mean(sigmas2_pred[bin_mask, i_pred_var]))
+                bins_maes.append(np.mean(diffs[bin_mask]))
+            else:
+                bins_maes.append(np.nan)
+                bins_sigmas.append(np.nan)
+        bins_maes = np.array(bins_maes)
+        bins_sigmas = np.array(bins_sigmas)
+        bins_stds = np.sqrt(bins_sigmas)
+
+        plt.sca(axs[i_pred_var])
+        var_name = (
+            model.labels_names[i_pred_var]
+            if model.labels_names
+            else f"variable_{i_pred_var}"
+        )
+        print(f"{bins_centers.shape=}")
+        print(f"{bins_maes.shape=}")
+        plt.errorbar(
+            bins_centers,
+            bins_maes,
+            yerr=bins_stds,
+            # fmt="o",
+            color="red",
+            label=f"Predicted std of {var_name}",
+            capthick=2,
+        )
+        plt.plot(
+            bins_centers,
+            bins_maes,
+            label=f"MAE {var_name}",
+            color="blue",
+            marker="o",
+        )
+        plt.ylim(y_lims[i_pred_var])
+        plt.xlabel(f"True Values of {var_name}")
+        plt.ylabel("Mean Absolute Error with Predicted Standard Deviation")
+        plt.grid()
+        plt.legend()
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    plt.suptitle("Errors vs Sigma Predictions with Error Bars")
+    model.logger.experiment.add_figure(f"plot_errors_means_and_stds", fig)
     plt.close(fig)
 
 

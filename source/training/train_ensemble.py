@@ -131,6 +131,9 @@ def train_ensemble_of_models(
         model.verbose = True
         model.data_dir = model.hparams["data_dir"]
         model.lr = config.getfloat("ENSEMBLE", "lr")
+        model.hparams["alpha"] = config.getfloat("MODEL", "alpha")
+        model.alpha = model.hparams["alpha"]
+        model.criterion.alpha = model.hparams["alpha"]
 
         swa_lr = config.getfloat("ENSEMBLE", "swa_lr")
         swa_start = config.getint("ENSEMBLE", "swa_start")

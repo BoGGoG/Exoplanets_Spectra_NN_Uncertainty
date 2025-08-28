@@ -95,6 +95,9 @@ def continue_training_best_model(
     model.verbose = True
     model.data_dir = model.hparams["data_dir"]
     model.lr = config.getfloat("MODEL", "lr")
+    model.hparams["alpha"] = config.getfloat("MODEL", "alpha")
+    model.alpha = model.hparams["alpha"]
+    model.criterion.alpha = model.hparams["alpha"]
 
     swa_lr = config.getfloat("MODEL", "swa_lr")
     swa_start = config.getint("MODEL", "swa_start")
