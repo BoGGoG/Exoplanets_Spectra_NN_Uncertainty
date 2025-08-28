@@ -242,13 +242,13 @@ def main():
     run_dir = config["DIRECTORIES"]["rundir"]
     db_file_path = os.path.join(run_dir, "out", "final", "optuna", f"{model_class}.db")
     optuna_log_dir = f"sqlite:///{db_file_path}"
-    if config.get("MODEL", "use_pretrained").lower() != "false":
+    if config.get("ENSEMBLE", "use_pretrained", fallback="false").lower() != "false":
         print(
             "Using pretrained model from {}".format(
-                config.get("MODEL", "use_pretrained")
+                config.get("ENSEMBLE", "use_pretrained")
             )
         )
-        best_model_path = config.get("MODEL", "use_pretrained")
+        best_model_path = config.get("ENSEMBLE", "use_pretrained")
     else:
         print("Using best model from hyperopt")
         best_model_path = get_best_model_from_trials(

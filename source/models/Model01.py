@@ -349,6 +349,21 @@ class CNNTimeSeriesRegressor(nn.Module):
 
         return ModelOutput(mus=mus, sigmas2=sigmas2)
 
+    def reset_weights(self, generator=None):
+        """
+        Model has linear layers as well as convolutional layers.
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, generator=generator, gain=1.0)
+                # nn.init.kaiming_uniform(m.weight, generator=generator, a=0, nonlinearity="relu")
+                nn.init.zeros_(m.bias)
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_uniform_(
+                    m.weight, generator=generator, a=0, nonlinearity="relu"
+                )
+                nn.init.zeros_(m.bias)
+
 
 class Model_03(nn.Module):
     """
