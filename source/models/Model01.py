@@ -476,6 +476,8 @@ class Model_Lit(L.LightningModule):
         self.criterion = NLLLossMultivariate(reduction="mean", alpha=self.alpha)
         self.pred_criterion = nn.MSELoss(reduction="mean")
         self.scaler = StandardScaler()
+        self.scaler_mean = None
+        self.scaler_var = None
         self.test_step_outputs = []
         self.labels_names = None
         self.model_history = []
@@ -496,8 +498,11 @@ class Model_Lit(L.LightningModule):
             self.labels_names = labels_train.columns.tolist()
             labels_train = labels_train.values
             labels_train = self.scaler.fit_transform(labels_train)
+            self.scaler_mean = self.scaler.mean_
+            self.scaler_var = self.scaler.var_
             print(f"Loaded training spectra with shape: {spectra_train.shape}")
             print(f"Loaded training labels with shape: {labels_train.shape}")
+            print(f"{self.scaler_mean=}, {self.scaler_var=}")
 
             spectra_train = torch.tensor(spectra_train, dtype=torch.float32)
             labels_train = torch.tensor(labels_train, dtype=torch.float32)
@@ -599,6 +604,20 @@ class Model_Lit(L.LightningModule):
             logger=True,
         )
         return loss
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        x, y = batch
+        y_pred = self(x)
+        scale_back = True
+        if self.scaler_mean is not None and self.scaler_var is not None:
+            mean = torch.tensor(self.scaler_mean, dtype=torch.float32, device=x.device)
+            var = torch.tensor(self.scaler_var, dtype=torch.float32, device=x.device)
+            mus = y_pred.mus * torch.sqrt(var) + mean
+            sigmas2 = y_pred.sigmas2 * var
+        else:  # in earlier models I did not store the scaler mean and var
+            mus = y_pred.mus
+            sigmas2 = y_pred.sigmas2
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
