@@ -262,40 +262,15 @@ def main():
     )
     if not os.path.exists(os.path.dirname(path_onnx)):
         os.makedirs(os.path.dirname(path_onnx))
-    model = model_registry[config.get("MODEL", "model_class")].load_from_checkpoint(
-        best_model_retrained_path
-    )
+    model = Model_Lit.load_from_checkpoint(best_model_retrained_path)
     shutil.copy(best_model_retrained_path, path_cpt)
     model.eval()
     torch.save(model.model, path_pt)
 
-    # save model as onnx
-    x = torch.randn(
-        1,
-        7,
-        config.getint("GENERAL", "input_size"),
-        requires_grad=False,
-        device=accelerator,
-    )
-    torch_out = model(x)
-    # Export the model
-    torch.onnx.export(
-        model,  # model being run
-        x,  # model input (or a tuple for multiple inputs)
-        path_onnx,  # where to save the model (can be a file or file-like object)
-        export_params=True,  # store the trained parameter weights inside the model file
-        opset_version=config.getint(
-            "MODEL", "opset_version_onnx"
-        ),  # the ONNX version to export the model to
-        do_constant_folding=True,  # whether to execute constant folding for optimization
-        input_names=["input"],  # the model's input names
-        output_names=["output"],  # the model's output names
-        dynamic_axes={"input": {0: "batch_size"}},  # variable length axes
-    )
     # torch.save(model.model, path)
     print("Best model (pytorch) saved to: {}".format(path_pt))
     print("Best model (lightning) saved to: {}".format(path_cpt))
-    print("onnx model saved to: {}".format(path_onnx))
+    # print("onnx model saved to: {}".format(path_onnx))
     # print("Load with `model = torch.load(\"{}\")`".format(path))
     print("Lightning (Tensorboard) logs saved to: {}".format(logger.log_dir))
     print("Load with `tensorboard --logdir={}`".format(logger.log_dir))
