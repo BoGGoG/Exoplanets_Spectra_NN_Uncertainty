@@ -798,11 +798,14 @@ def plot_errors_means_and_stds(model, y_test, y_pred, sigmas2_pred):
             bins_centers,
             bins_maes,
             yerr=bins_stds,
-            # fmt="o",
             color="red",
             label=f"Predicted std of {var_name}",
-            capthick=2,
+            # capthick=2,
+            capsize=4,
+            elinewidth=1,
+            fmt="none",  # disable connecting lines between error bars
         )
+
         plt.plot(
             bins_centers,
             bins_maes,
@@ -829,9 +832,12 @@ def plot_std_vs_pred_std(model, y_test, y_pred, sigmas2_pred):
     n_vars = y_test.shape[1]
 
     fig, axs = plt.subplots(n_vars, 1, figsize=(8, 3 * n_vars))
+    n_bins = 30
 
     for i_pred_var in range(n_vars):
-        bins = np.linspace(min(y_test[:, i_pred_var]), max(y_test[:, i_pred_var]), 50)
+        bins = np.linspace(
+            min(y_test[:, i_pred_var]), max(y_test[:, i_pred_var]), n_bins
+        )
         bin_stds = []
         bin_sigmas = []
         bin_errors = []
