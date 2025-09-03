@@ -7,10 +7,14 @@ from datetime import date
 from pathlib import Path
 
 import lightning as L
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 import optuna
 import pandas as pd
+import scienceplots
 import torch
+from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import (
     EarlyStopping,
     GradientAccumulationScheduler,
@@ -20,16 +24,13 @@ from lightning.pytorch.callbacks import (
 )
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.utilities.model_summary import ModelSummary
-from lightning.pytorch import Trainer
+from matplotlib.colors import Normalize
+from torch.utils.data import DataLoader, Dataset, random_split
 
 from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
-from torch.utils.data import DataLoader, Dataset, random_split
-import matplotlib.pyplot as plt
 from source.utils import var_names
-import matplotlib as mpl
-import scienceplots
 
 
 def load_models(config):
@@ -229,7 +230,7 @@ if __name__ == "__main__":
     indiv_losses_per_var = np.abs(diff)
 
     # -----------------------------------------------
-    # PLOT DIFF HISTOGRAMS FOR EACH OUTPUT DIMENSION
+    # PLOT RMSE HISTOGRAMS FOR EACH OUTPUT DIMENSION
     n_vars = y_pred.shape[1]
     y_scale = "linear"
     x_scale = "linear"
@@ -267,6 +268,15 @@ if __name__ == "__main__":
         # axs[i].set_xlabel(lossname if i == n_vars - 1 else "")
         axs[i].set_xlabel(lossname)
         axs[i].set_ylabel("Count")
+        # add text with mean of the loss to the plot with a vertical line
+        loss_mean = np.mean(indiv_losses_per_var[:, i])
+        loss_median = np.median(indiv_losses_per_var[:, i])
+        axs[i].axvline(
+            loss_mean, color="orange", linestyle="--", label=f"Mean={loss_mean:.4}"
+        )
+        axs[i].axvline(
+            loss_median, color="red", linestyle="--", label=f"Median={loss_median:.4}"
+        )
         axs[i].legend(fontsize="large")
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
@@ -492,4 +502,46 @@ if __name__ == "__main__":
     plt.subplots_adjust(top=0.95)
     path = plots_dir / "errors_with_errorbars_horizontal.png"
     plt.savefig(path)
+    plt.close(fig)
+
+    # plot all true vs predicted values for each variable
+    # the color of the dots should be the absolute difference between true and predicted
+    # on a colormap from blue (small difference) to red (large difference)
+    abs_diffs = np.abs(y_pred - y_test)
+    fig, axs = plt.subplots(2, n_vars // 2, figsize=(2.5 * n_vars, 7))
+    axs = axs.flatten()
+
+    norm_first = Normalize(vmin=abs_diffs[:, 0].min(), vmax=abs_diffs[:, 0].max())
+    norm_last = Normalize(vmin=abs_diffs[:, -1].min(), vmax=abs_diffs[:, -1].max())
+
+    for i_pred_var in range(n_vars):
+        colors = abs_diffs[:, i_pred_var]
+        if i_pred_var == 0:
+            norm = norm_first
+        else:
+            norm = norm_last
+        sc = axs[i_pred_var].scatter(
+            y_test[:, i_pred_var],
+            y_pred[:, i_pred_var],
+            c=colors,
+            # cmap="coolwarm",
+            cmap="jet",
+            norm=norm,
+            s=0.5,
+            alpha=0.5,
+        )
+        axs[i_pred_var].set_xlabel(r"$y_\text{t}$")
+        axs[i_pred_var].set_ylabel(r"$y_\text{p}$")
+        axs[i_pred_var].xaxis.set_major_locator(plt.MaxNLocator(8))
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        # Add colorbar for first and last variable
+        if i_pred_var == 0 or i_pred_var == n_vars - 1:
+            cbar = fig.colorbar(sc, ax=axs[i_pred_var])
+            cbar.set_label("Absolute Error", fontsize=12)
+
+    plt.tight_layout()
+    path = plots_dir / "true_vs_pred_scatter_horizontal_with_alpha.png"
+    # path = plots_dir / "true_vs_pred_scatter_horizontal.png"
+    plt.savefig(path)
+    print(f"Saved true vs predicted scatter plot to {path}")
     plt.close(fig)
