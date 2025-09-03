@@ -508,11 +508,13 @@ if __name__ == "__main__":
     # the color of the dots should be the absolute difference between true and predicted
     # on a colormap from blue (small difference) to red (large difference)
     abs_diffs = np.abs(y_pred - y_test)
-    fig, axs = plt.subplots(2, n_vars // 2, figsize=(2.5 * n_vars, 7))
-    axs = axs.flatten()
+    # fig, axs = plt.subplots(2, n_vars // 2, figsize=(2.5 * n_vars, 7))
+    fig, axs = plt.subplots(1, n_vars, figsize=(4 * n_vars, 4))
+    # axs = axs.flatten()
 
     norm_first = Normalize(vmin=abs_diffs[:, 0].min(), vmax=abs_diffs[:, 0].max())
     norm_last = Normalize(vmin=abs_diffs[:, -1].min(), vmax=abs_diffs[:, -1].max())
+    y_lims = [-9, -3]
 
     for i_pred_var in range(n_vars):
         colors = abs_diffs[:, i_pred_var]
@@ -528,20 +530,34 @@ if __name__ == "__main__":
             cmap="jet",
             norm=norm,
             s=0.5,
-            alpha=0.5,
+            # alpha=0.5,
         )
         axs[i_pred_var].set_xlabel(r"$y_\text{t}$")
-        axs[i_pred_var].set_ylabel(r"$y_\text{p}$")
-        axs[i_pred_var].xaxis.set_major_locator(plt.MaxNLocator(8))
+        # if i_pred_var == 0 or i_pred_var == 1:
+        #     axs[i_pred_var].set_ylabel(r"$y_\text{p}$")
+        # axs[i_pred_var].xaxis.set_major_locator(plt.MaxNLocator(9))
+        # axs[i_pred_var].xaxis.set_minor_locator(plt.MaxNLocator(9))
         axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
         # Add colorbar for first and last variable
         if i_pred_var == 0 or i_pred_var == n_vars - 1:
             cbar = fig.colorbar(sc, ax=axs[i_pred_var])
-            cbar.set_label("Absolute Error", fontsize=12)
+            # cbar.set_label("Absolute Error", fontsize=12)
+        if i_pred_var != 0:
+            axs[i_pred_var].set_ylim(y_lims)
+            axs[i_pred_var].set_xlim(y_lims)
+        if i_pred_var > 1:  # no ytick labels for all but first two plots
+            axs[i_pred_var].set_yticklabels([])
+
+    plt.suptitle(
+        r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {len(models)} models"
+    )
 
     plt.tight_layout()
-    path = plots_dir / "true_vs_pred_scatter_horizontal_with_alpha.png"
-    # path = plots_dir / "true_vs_pred_scatter_horizontal.png"
+    plt.subplots_adjust(wspace=0.2)
+    # path = plots_dir / "true_vs_pred_scatter_two_rows_with_alpha.png"
+    # path = plots_dir / "true_vs_pred_scatter_two_rows.png"
+    # path = plots_dir / "true_vs_pred_scatter_one_row_with_alpha.png"
+    path = plots_dir / "true_vs_pred_scatter_one_row.png"
     plt.savefig(path)
     print(f"Saved true vs predicted scatter plot to {path}")
     plt.close(fig)
