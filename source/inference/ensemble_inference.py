@@ -542,7 +542,11 @@ if __name__ == "__main__":
         if i_pred_var == 0 or i_pred_var == n_vars - 1:
             cbar = fig.colorbar(sc, ax=axs[i_pred_var])
             # cbar.set_label("Absolute Error", fontsize=12)
-        if i_pred_var != 0:
+        if i_pred_var == 0:
+            y_lims_T = [y_test[:, i_pred_var].min(), y_test[:, i_pred_var].max()]
+            axs[i_pred_var].set_ylim(y_lims_T)
+            axs[i_pred_var].set_xlim(y_lims_T)
+        else:
             axs[i_pred_var].set_ylim(y_lims)
             axs[i_pred_var].set_xlim(y_lims)
         if i_pred_var > 1:  # no ytick labels for all but first two plots
