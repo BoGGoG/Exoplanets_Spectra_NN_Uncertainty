@@ -16,6 +16,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
 from collections import namedtuple
+# from source.models.QNN import QNN_01
 
 
 # model output as named tuple instead of dict, because of some logging issues with dicts
@@ -241,7 +242,7 @@ class CNNTimeSeriesRegressor(nn.Module):
         verbose: bool = False,
     ):
         """
-        Pure CNN encoder for time series regression (sequence → scalar).
+        CNN + dense encoder for time series regression (sequence → scalar).
 
         Args:
             in_channels: number of input channels (features per timestep).
@@ -972,6 +973,7 @@ def test_NLLLoss():
 model_registry = {
     "CNNTimeSeriesRegressor": CNNTimeSeriesRegressor,
     "Model_03": Model_03,
+    # "QNN_01": QNN_01,
 }
 
 

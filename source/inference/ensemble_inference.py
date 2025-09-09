@@ -62,6 +62,12 @@ class InferenceDataSet(Dataset):
         )
 
 
+def darken_cmap(cmap, factor=0.7):
+    new_cmap = cmap(np.linspace(0, 1, 256))
+    new_cmap[:, :3] *= factor  # scale RGB channels
+    return mpl.colors.ListedColormap(new_cmap)
+
+
 plt.style.use(["science", "grid"])
 mpl.rcParams.update(
     {
@@ -105,10 +111,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, help="Path to the configuration file", required=True
     )
+    predict = False
     args = parser.parse_args()
     config = read_config(args.config)
-    models = load_models(config)
-    print(f"Loaded {len(models)} models for ensemble inference.")
+    if predict:
+        models = load_models(config)
+        print(f"Loaded {len(models)} models for ensemble inference.")
 
     inference_data_path = config["ENSEMBLE_INFERENCE"]["inference_data_path"]
     print(f"Loading inference data from {inference_data_path}")
@@ -124,44 +132,58 @@ if __name__ == "__main__":
     inference_dataloader = DataLoader(
         inference_dataset, batch_size=256, shuffle=False, drop_last=False
     )
+    predictions_dir = (
+        Path(config["ENSEMBLE_INFERENCE"]["ENSEMBLE_SAVEDIR"]) / "test_predictions"
+    )
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    predictions_path = predictions_dir / "ensemble_predictions.npz"
 
-    trainer = Trainer()
-    predictions = []
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    for m in models:
-        m.to(device)
-        m.scaler_mean = np.array(
-            [
-                1190.83726355,
-                -6.00609932,
-                -6.50023774,
-                -5.99933525,
-                -4.49630322,
-                -6.49604898,
-            ]
-        )
-        m.scaler_var = np.array(
-            [
-                4.40644566e05,
-                3.00482659e00,
-                2.08444992e00,
-                3.02831506e00,
-                7.46910864e-01,
-                2.07242987e00,
-            ]
-        )
-        pred = trainer.predict(m, dataloaders=inference_dataloader)
-        m.to("cpu")
-        mus_pred = torch.cat([p[0].cpu() for p in pred]).numpy()
-        sigmas2_pred = torch.cat([p[1].cpu() for p in pred]).numpy()  # sigmas^2
-        output = np.array([mus_pred, sigmas2_pred])
-        predictions.append(output)
-    predictions = np.array(predictions)
-    predictions = predictions.transpose(
-        0, 2, 3, 1
-    )  # [model, sample, output_dim, (mu,sigma)]
-    print(f"Predictions shape from all models: {predictions.shape}")
-    print(predictions[:, 0, :])
+    if predict:
+        trainer = Trainer()
+        predictions = []
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        for m in models:
+            m.to(device)
+            m.scaler_mean = np.array(
+                [
+                    1190.83726355,
+                    -6.00609932,
+                    -6.50023774,
+                    -5.99933525,
+                    -4.49630322,
+                    -6.49604898,
+                ]
+            )
+            m.scaler_var = np.array(
+                [
+                    4.40644566e05,
+                    3.00482659e00,
+                    2.08444992e00,
+                    3.02831506e00,
+                    7.46910864e-01,
+                    2.07242987e00,
+                ]
+            )
+            pred = trainer.predict(m, dataloaders=inference_dataloader)
+            m.to("cpu")
+            mus_pred = torch.cat([p[0].cpu() for p in pred]).numpy()
+            sigmas2_pred = torch.cat([p[1].cpu() for p in pred]).numpy()  # sigmas^2
+            output = np.array([mus_pred, sigmas2_pred])
+            predictions.append(output)
+        predictions = np.array(predictions)
+        predictions = predictions.transpose(
+            0, 2, 3, 1
+        )  # [model, sample, output_dim, (mu,sigma)]
+        print(f"Predictions shape from all models: {predictions.shape}")
+        print(predictions[:, 0, :])
+
+        # save predictions
+        np.savez_compressed(predictions_path, predictions=predictions)
+
+    # load predictions
+    predictions = np.load(predictions_path)["predictions"]
+
+    # raise NotImplementedError
 
     # for the predictions, take the mean of the mus
     # for the aleatoric variance, take the mean of the sigmas^2
@@ -212,10 +234,7 @@ if __name__ == "__main__":
     )
     plt.xticks(
         x,
-        [
-            models[0].labels_names[i] if models[0].labels_names else var_names[i]
-            for i in x
-        ],
+        [var_names[i] for i in x],
     )
     plt.xlabel("Output Dimension")
     plt.ylabel("Normalized RMSE")
@@ -252,7 +271,7 @@ if __name__ == "__main__":
             axs[i].hist(
                 indiv_losses_per_var[:, i],
                 bins=200,
-                label=f"{models[0].labels_names[i] if models[0].labels_names else var_names[i]}",
+                label=f"{var_names[i]}",
                 density=True,
                 range=ranges[i],
             )
@@ -260,7 +279,7 @@ if __name__ == "__main__":
             axs[i].hist(
                 indiv_losses_per_var[:, i],
                 bins=200,
-                label=f"{models[0].labels_names[i] if models[0].labels_names else var_names[i]}",
+                label=f"{var_names[i]}",
                 density=True,
             )
         axs[i].set_xscale(x_scale)
@@ -340,12 +359,7 @@ if __name__ == "__main__":
         bin_rmse = np.array(bin_rmse)
 
         plt.sca(axs[i_pred_var])
-        var_name = (
-            models[0].labels_names[i_pred_var]
-            if models[0].labels_names
-            # else f"variable_{i_pred_var}"
-            else var_names[i_pred_var]
-        )
+        var_name = var_names[i_pred_var]
 
         plt.plot(
             bin_centers, bin_labels_std, label="labels std", color="gray", marker="x"
@@ -380,14 +394,11 @@ if __name__ == "__main__":
         # plt.grid()
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
-    model_class = config["MODEL"]["model_class"]
-    # plt.suptitle(
-    #     f"Uncertainty Estimates for ensemble of {len(models)} {model_class} models"
-    # )
     plot_path = plots_dir / "uncertainty_estimates_vs_true_std_horizontal.png"
     plt.savefig(plot_path)
     plt.close()
 
+    ########################################################################################
     ################ Errors means and stds
     # For each variable, calculate the MAE in in bins based on the true value of that variable.
     # Also calculate the mean predicted sigma in those bins and plot as error bar on the mean.
@@ -445,19 +456,10 @@ if __name__ == "__main__":
         bin_rmse = np.array(bin_rmse)
 
         plt.sca(axs[i_pred_var])
-        var_name = (
-            models[0].labels_names[i_pred_var]
-            if models[0].labels_names
-            # else f"variable_{i_pred_var}"
-            else var_names[i_pred_var]
-        )
+        var_name = var_names[i_pred_var]
 
         plt.sca(axs[i_pred_var])
-        var_name = (
-            models[0].labels_names[i_pred_var]
-            if models[0].labels_names
-            else var_names[i_pred_var]
-        )
+        var_name = var_names[i_pred_var]
         plt.plot(
             bin_centers,
             bin_rmse,
@@ -503,6 +505,8 @@ if __name__ == "__main__":
     path = plots_dir / "errors_with_errorbars_horizontal.png"
     plt.savefig(path)
     plt.close(fig)
+
+    ########################################################################################
 
     # plot all true vs predicted values for each variable
     # the color of the dots should be the absolute difference between true and predicted
@@ -552,9 +556,7 @@ if __name__ == "__main__":
         if i_pred_var > 1:  # no ytick labels for all but first two plots
             axs[i_pred_var].set_yticklabels([])
 
-    plt.suptitle(
-        r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {len(models)} models"
-    )
+    plt.suptitle(r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {10} models")
 
     plt.tight_layout()
     plt.subplots_adjust(wspace=0.2)
@@ -565,3 +567,243 @@ if __name__ == "__main__":
     plt.savefig(path)
     print(f"Saved true vs predicted scatter plot to {path}")
     plt.close(fig)
+
+    ########################################################################################
+    # scatter plot of error vs predicted uncertainty for each variable
+    # the color of the dots should be the absolute difference between prediction error and predicted uncertainty
+    # fig, axs = plt.subplots(1, n_vars, figsize=(4 * n_vars, 4), layout="constrained")
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    pred_errors_all = y_pred - y_test
+    pred_uncs_all = np.sqrt(aleatoric_var)
+    abs_diffs = np.abs(pred_errors_all) - pred_uncs_all
+    norm_first = Normalize(
+        vmin=abs_diffs[:, 0].min() * 0.7, vmax=abs_diffs[:, 0].max() * 0.7
+    )
+    norm_last = Normalize(
+        vmin=abs_diffs[:, -1].min() * 0.7, vmax=abs_diffs[:, -1].max() * 0.7
+    )
+
+    dark_turbo = darken_cmap(plt.cm.turbo, 0.7)
+    for i_pred_var in range(n_vars):
+        if i_pred_var == 0:
+            norm = norm_first
+        else:
+            norm = norm_last
+        pred_errors = y_pred[:, i_pred_var] - y_test[:, i_pred_var]
+        var_name = var_names[i_pred_var]
+        pred_unc = np.sqrt(aleatoric_var[:, i_pred_var])
+        colors = np.abs(pred_errors) - pred_unc
+        sc = axs[i_pred_var].scatter(
+            pred_unc,
+            pred_errors,
+            c=colors,
+            s=1,
+            # cmap="jet",
+            # cmap="turbo",
+            # cmap="berlin",
+            # cmap="vanimo",
+            # cmap="magma",
+            cmap=dark_turbo,
+            norm=norm,
+        )
+        # plot diagonal line from 0,0 to max of x and max and min of y
+        ax_x_max = pred_unc.max()
+        axs[i_pred_var].plot(
+            [0, ax_x_max],
+            [0, ax_x_max],
+            ls="--",
+            color="gray",
+            lw=1,
+            label="1:1 line",
+        )
+        axs[i_pred_var].plot([0, ax_x_max], [0, -ax_x_max], ls="--", color="gray", lw=1)
+        if i_pred_var == 0:
+            axs[i_pred_var].set_ylabel(r"error = $y_\text{pred} - y_\text{true}$")
+        if i_pred_var == 0 or i_pred_var == n_vars - 1:
+            cbar = fig.colorbar(sc, ax=axs[i_pred_var])
+            # cbar.set_label("Absolute Error", fontsize=12)
+        # if i_pred_var > 1:  # no ytick labels for all but first two plots
+        #     axs[i_pred_var].set_yticklabels([])
+        axs[i_pred_var].set_xlabel(r"Aleatoric Unc. $\sigma_\mathrm{A}$")
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        axs[i_pred_var].legend()
+    # plt.tight_layout()
+    plt.suptitle(
+        r"Pred. error vs. aleatoric uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{A}|$, n_test="
+        + f"{y_test.shape[0]}"
+    )
+    plt.subplots_adjust(wspace=0.2)
+    plot_path = plots_dir / "error_vs_aleatoric_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved error vs aleatoric uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same with epistemic uncertainty
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    pred_errors_all = y_pred - y_test
+    pred_uncs_all = np.sqrt(epistemic_var)
+    abs_diffs = np.abs(pred_errors_all) - pred_uncs_all
+    norm_first = Normalize(
+        vmin=abs_diffs[:, 0].min() * 0.7, vmax=abs_diffs[:, 0].max() * 0.7
+    )
+    norm_last = Normalize(
+        vmin=abs_diffs[:, -1].min() * 0.7, vmax=abs_diffs[:, -1].max() * 0.7
+    )
+
+    dark_turbo = darken_cmap(plt.cm.turbo, 0.7)
+    for i_pred_var in range(n_vars):
+        if i_pred_var == 0:
+            norm = norm_first
+        else:
+            norm = norm_last
+        pred_errors = y_pred[:, i_pred_var] - y_test[:, i_pred_var]
+        var_name = var_names[i_pred_var]
+        pred_unc = np.sqrt(epistemic_var[:, i_pred_var])
+        colors = np.abs(pred_errors) - pred_unc
+        sc = axs[i_pred_var].scatter(
+            pred_unc,
+            pred_errors,
+            c=colors,
+            s=1,
+            # cmap="jet",
+            # cmap="turbo",
+            # cmap="berlin",
+            # cmap="vanimo",
+            # cmap="magma",
+            cmap=dark_turbo,
+            norm=norm,
+        )
+        # plot diagonal line from 0,0 to max of x and max and min of y
+        ax_x_max = pred_unc.max()
+        axs[i_pred_var].plot(
+            [0, ax_x_max],
+            [0, ax_x_max],
+            ls="--",
+            color="gray",
+            lw=1,
+            label="1:1 line",
+        )
+        axs[i_pred_var].plot([0, ax_x_max], [0, -ax_x_max], ls="--", color="gray", lw=1)
+        if i_pred_var == 0:
+            axs[i_pred_var].set_ylabel(r"error = $y_\text{pred} - y_\text{true}$")
+        if i_pred_var == 0 or i_pred_var == n_vars - 1:
+            cbar = fig.colorbar(sc, ax=axs[i_pred_var])
+            # cbar.set_label("Absolute Error", fontsize=12)
+        # if i_pred_var > 1:  # no ytick labels for all but first two plots
+        #     axs[i_pred_var].set_yticklabels([])
+        axs[i_pred_var].set_xlabel(r"Epistemic Unc. $\sigma_\mathrm{E}$")
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        axs[i_pred_var].legend()
+    # plt.tight_layout()
+    plt.suptitle(
+        r"Pred. error vs. epistemic uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{A}|$, n_test="
+        + f"{y_test.shape[0]}"
+    )
+    plt.subplots_adjust(wspace=0.2)
+    plot_path = plots_dir / "error_vs_epistemic_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved error vs epistemic uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same with full uncertainty (aleatoric^2 + epistemic^2)^1/2
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    pred_errors_all = y_pred - y_test
+    pred_uncs_all = np.sqrt(epistemic_var + aleatoric_var)
+    abs_diffs = np.abs(pred_errors_all) - pred_uncs_all
+    norm_first = Normalize(
+        vmin=abs_diffs[:, 0].min() * 0.7, vmax=abs_diffs[:, 0].max() * 0.7
+    )
+    norm_last = Normalize(
+        vmin=abs_diffs[:, -1].min() * 0.7, vmax=abs_diffs[:, -1].max() * 0.7
+    )
+
+    dark_turbo = darken_cmap(plt.cm.turbo, 0.7)
+    for i_pred_var in range(n_vars):
+        if i_pred_var == 0:
+            norm = norm_first
+        else:
+            norm = norm_last
+        pred_errors = y_pred[:, i_pred_var] - y_test[:, i_pred_var]
+        var_name = var_names[i_pred_var]
+        pred_unc = np.sqrt(epistemic_var[:, i_pred_var] + aleatoric_var[:, i_pred_var])
+        colors = np.abs(pred_errors) - pred_unc
+        sc = axs[i_pred_var].scatter(
+            pred_unc,
+            pred_errors,
+            c=colors,
+            s=1,
+            # cmap="jet",
+            # cmap="turbo",
+            # cmap="berlin",
+            # cmap="vanimo",
+            # cmap="magma",
+            cmap=dark_turbo,
+            norm=norm,
+        )
+        # plot diagonal line from 0,0 to max of x and max and min of y
+        ax_x_max = pred_unc.max()
+        axs[i_pred_var].plot(
+            [0, ax_x_max],
+            [0, ax_x_max],
+            ls="--",
+            color="gray",
+            lw=1,
+            label="1:1 line",
+        )
+        axs[i_pred_var].plot([0, ax_x_max], [0, -ax_x_max], ls="--", color="gray", lw=1)
+        if i_pred_var == 0:
+            axs[i_pred_var].set_ylabel(r"error = $y_\text{pred} - y_\text{true}$")
+        if i_pred_var == 0 or i_pred_var == n_vars - 1:
+            cbar = fig.colorbar(sc, ax=axs[i_pred_var])
+            # cbar.set_label("Absolute Error", fontsize=12)
+        # if i_pred_var > 1:  # no ytick labels for all but first two plots
+        #     axs[i_pred_var].set_yticklabels([])
+        axs[i_pred_var].set_xlabel(
+            r"$\sqrt{\sigma_\mathrm{E}^2 + \sigma_\mathrm{A}^2}$"
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        axs[i_pred_var].legend()
+    # plt.tight_layout()
+    plt.suptitle(
+        r"Pred. error vs. ep.+al. uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{A}|$, n_test="
+        + f"{y_test.shape[0]}"
+    )
+    plt.subplots_adjust(wspace=0.2)
+    plot_path = plots_dir / "error_vs_full_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved error vs full uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    ###################################################################################################
+    # scatter plot of sigma_aleatoric vs sigma_epistemic for each variable
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        axs[i_pred_var].scatter(
+            np.sqrt(aleatoric_var[:, i_pred_var]),
+            np.sqrt(epistemic_var[:, i_pred_var]),
+            s=1,
+            color="blue",
+        )
+        axs[i_pred_var].set_xlabel(r"Aleatoric Unc. $\sigma_\mathrm{A}$")
+        axs[i_pred_var].set_ylabel(r"Epistemic Unc. $\sigma_\mathrm{E}$")
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.subplots_adjust(wspace=0.2)
+    plot_path = plots_dir / "aleatoric_vs_epistemic_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved aleatoric vs epistemic uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    ###################################################################################################
+    # scatter plot of true value vs RMSE/predicted uncertainty for each variable
