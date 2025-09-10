@@ -702,7 +702,7 @@ if __name__ == "__main__":
         axs[i_pred_var].legend()
     # plt.tight_layout()
     plt.suptitle(
-        r"Pred. error vs. epistemic uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{A}|$, n_test="
+        r"Pred. error vs. epistemic uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{E}|$, n_test="
         + f"{y_test.shape[0]}"
     )
     plt.subplots_adjust(wspace=0.2)
@@ -774,10 +774,9 @@ if __name__ == "__main__":
         axs[i_pred_var].legend()
     # plt.tight_layout()
     plt.suptitle(
-        r"Pred. error vs. ep.+al. uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{A}|$, n_test="
+        r"Pred. error vs. ep.+al. uncertainty, color=$|\mathrm{error}-\sigma_\mathrm{E+A}|$, n_test="
         + f"{y_test.shape[0]}"
     )
-    plt.subplots_adjust(wspace=0.2)
     plot_path = plots_dir / "error_vs_full_uncertainty.png"
     plt.savefig(plot_path)
     print(f"Saved error vs full uncertainty plot to {plot_path}")
@@ -799,7 +798,6 @@ if __name__ == "__main__":
         axs[i_pred_var].set_xlabel(r"Aleatoric Unc. $\sigma_\mathrm{A}$")
         axs[i_pred_var].set_ylabel(r"Epistemic Unc. $\sigma_\mathrm{E}$")
         axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
-    plt.subplots_adjust(wspace=0.2)
     plot_path = plots_dir / "aleatoric_vs_epistemic_uncertainty.png"
     plt.savefig(plot_path)
     print(f"Saved aleatoric vs epistemic uncertainty plot to {plot_path}")
@@ -807,3 +805,185 @@ if __name__ == "__main__":
 
     ###################################################################################################
     # scatter plot of true value vs RMSE/predicted uncertainty for each variable
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            aleatoric_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        axs[i_pred_var].scatter(x_plot, y_plot, s=1, color="blue")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(
+            r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle("True Value vs. Error/Aleatoric Uncertainty")
+    plot_path = plots_dir / "true_value_vs_rmse_over_aleatoric_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same for epistemic
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            epistemic_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        axs[i_pred_var].scatter(x_plot, y_plot, s=1, color="blue")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(
+            r"($y_\text{pred} - y_\text{true})$ / Epistemic Unc."
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle("True Value vs. Error/Epistemic Uncertainty")
+    plot_path = plots_dir / "true_value_vs_rmse_over_epistemic_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/epistemic uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same for full uncertainty
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            epistemic_var[:, i_pred_var] + aleatoric_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        axs[i_pred_var].scatter(x_plot, y_plot, s=1, color="blue")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(
+            r"($y_\text{pred} - y_\text{true}) / \sqrt{\sigma_\mathrm{E}^2 + \sigma_\mathrm{A}^2}$"
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle("True Value vs. Error/(Ep.+Al.) Uncertainty")
+    plot_path = plots_dir / "true_value_vs_rmse_over_full_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/ep.+al. uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    ##########################################################################
+    # error/sigma histograms for each variable
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            epistemic_var[:, i_pred_var]
+        )
+        axs[i_pred_var].axvspan(-1, 1, color="lightgreen", alpha=0.5)
+        x_max_plot = 5
+        axs[i_pred_var].axvspan(1, x_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axvspan(-x_max_plot, -1, color="red", alpha=0.2)
+        counts, bins, _ = axs[i_pred_var].hist(
+            y_plot, bins=100, range=[-5, 5], color="blue", alpha=0.7
+        )
+        axs[i_pred_var].set_xlabel(
+            r"($y_\text{pred} - y_\text{true}) / \sigma_\text{E}$"
+        )
+        if i_pred_var == 0 or i_pred_var == 3:
+            axs[i_pred_var].set_ylabel("Count")
+        n_in_1_sigma = counts[(bins[:-1] >= -1) & (bins[:-1] <= 1)].sum()
+        axs[i_pred_var].set_title(
+            f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
+            + r" in $\pm 1 \sigma_\text{E}$"
+        )
+    plt.suptitle("Histogram of Error/Epistemic Uncertainty")
+    plot_path = plots_dir / "histogram_error_over_epistemic_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved histogram of error/epistemic uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same for aleatoric
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            aleatoric_var[:, i_pred_var]
+        )
+        axs[i_pred_var].axvspan(-1, 1, color="lightgreen", alpha=0.5)
+        x_max_plot = 5
+        axs[i_pred_var].axvspan(1, x_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axvspan(-x_max_plot, -1, color="red", alpha=0.2)
+        counts, bins, _ = axs[i_pred_var].hist(
+            y_plot, bins=100, range=[-5, 5], color="blue", alpha=0.7
+        )
+        axs[i_pred_var].set_xlabel(
+            r"($y_\text{pred} - y_\text{true}) / \sigma_\text{A}$"
+        )
+        if i_pred_var == 0 or i_pred_var == 3:
+            axs[i_pred_var].set_ylabel("Count")
+        n_in_1_sigma = counts[(bins[:-1] >= -1) & (bins[:-1] <= 1)].sum()
+        axs[i_pred_var].set_title(
+            f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
+            + r" in $\pm 1 \sigma_\text{A}$"
+        )
+    plt.suptitle("Histogram of Error/Aleatoric Uncertainty")
+    plot_path = plots_dir / "histogram_error_over_aleatoric_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved histogram of error/aleatoric uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same for full uncertainty
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            aleatoric_var[:, i_pred_var] + epistemic_var[:, i_pred_var]
+        )
+        axs[i_pred_var].axvspan(-1, 1, color="lightgreen", alpha=0.5)
+        x_max_plot = 5
+        axs[i_pred_var].axvspan(1, x_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axvspan(-x_max_plot, -1, color="red", alpha=0.2)
+        counts, bins, _ = axs[i_pred_var].hist(
+            y_plot, bins=100, range=[-5, 5], color="blue", alpha=0.7
+        )
+        axs[i_pred_var].set_xlabel(
+            r"($y_\text{pred} - y_\text{true}) / \sqrt{\sigma_\text{A}^2 + \sigma_\text{E}^2}$"
+        )
+        if i_pred_var == 0 or i_pred_var == 3:
+            axs[i_pred_var].set_ylabel("Count")
+        n_in_1_sigma = counts[(bins[:-1] >= -1) & (bins[:-1] <= 1)].sum()
+        axs[i_pred_var].set_title(
+            f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
+            + r" in $\pm 1 \sigma_\text{A+E}$"
+        )
+    plt.suptitle("Histogram of Error/Ep. + Al. Uncertainty")
+    plot_path = plots_dir / "histogram_error_over_full_uncertainty.png"
+    plt.savefig(plot_path)
+    print(f"Saved histogram of error/full uncertainty plot to {plot_path}")
+    plt.close(fig)
