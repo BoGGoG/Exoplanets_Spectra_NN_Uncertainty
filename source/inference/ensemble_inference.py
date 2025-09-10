@@ -918,6 +918,18 @@ if __name__ == "__main__":
             f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
             + r" in $\pm 1 \sigma_\text{E}$"
         )
+        # draw a normal distribution with mean 0 and std 1
+        xs = np.linspace(-5, 5, 200)
+        ys = np.exp(-0.5 * xs**2) / np.sqrt(2 * np.pi)
+        axs[i_pred_var].plot(
+            xs,
+            ys * counts.max() / ys.max(),
+            color="red",
+            lw=2,
+            label=r"Gauss., $\sigma=1$",
+        )
+        axs[i_pred_var].legend(loc="upper left")
+
     plt.suptitle("Histogram of Error/Epistemic Uncertainty")
     plot_path = plots_dir / "histogram_error_over_epistemic_uncertainty.png"
     plt.savefig(plot_path)
@@ -950,6 +962,17 @@ if __name__ == "__main__":
             f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
             + r" in $\pm 1 \sigma_\text{A}$"
         )
+        # draw a normal distribution with mean 0 and std 1
+        xs = np.linspace(-5, 5, 200)
+        ys = np.exp(-0.5 * xs**2) / np.sqrt(2 * np.pi)
+        axs[i_pred_var].plot(
+            xs,
+            ys * counts.max() / ys.max(),
+            color="red",
+            lw=2,
+            label=r"Gauss., $\sigma=1$",
+        )
+        axs[i_pred_var].legend(loc="upper left")
     plt.suptitle("Histogram of Error/Aleatoric Uncertainty")
     plot_path = plots_dir / "histogram_error_over_aleatoric_uncertainty.png"
     plt.savefig(plot_path)
@@ -982,6 +1005,17 @@ if __name__ == "__main__":
             f"{var_names[i_pred_var]}, {100 * n_in_1_sigma / counts.sum():.2f}\\%"
             + r" in $\pm 1 \sigma_\text{A+E}$"
         )
+        # draw a normal distribution with mean 0 and std 1
+        xs = np.linspace(-5, 5, 200)
+        ys = np.exp(-0.5 * xs**2) / np.sqrt(2 * np.pi)
+        axs[i_pred_var].plot(
+            xs,
+            ys * counts.max() / ys.max(),
+            color="red",
+            lw=2,
+            label=r"Gauss., $\sigma=1$",
+        )
+        axs[i_pred_var].legend(loc="upper left")
     plt.suptitle("Histogram of Error/Ep. + Al. Uncertainty")
     plot_path = plots_dir / "histogram_error_over_full_uncertainty.png"
     plt.savefig(plot_path)
