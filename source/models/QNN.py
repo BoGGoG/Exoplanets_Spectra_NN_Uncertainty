@@ -20,6 +20,8 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
 from collections import namedtuple
+import pennylane as qml
+from typing import Optional
 from source.models.Model01 import MeanStdNormalizer, NLLLossMultivariate, Model_Lit
 
 
@@ -27,6 +29,135 @@ from source.models.Model01 import MeanStdNormalizer, NLLLossMultivariate, Model_
 # I think if one has self.example_input_array and wants to log the graph, it needs to be a tuple and not a dict
 ModelOutput = namedtuple("ModelOutput", ["mus", "sigmas2"])
 torch.set_float32_matmul_precision("highest")  # or "high"
+
+
+def make_quantum_layer_old(n_qubits: int, n_layers: int, q_out: int):
+    """Build a Torch-wrapped QNode that maps a latent vector -> q_out quantum features."""
+    dev = qml.device("default.qubit", wires=n_qubits)
+
+    # @qml.qnode(dev, interface="torch", diff_method="parameter-shift")
+    @qml.qnode(dev, interface="torch", diff_method="best")
+    def circuit(inputs, weights):
+        # inputs: shape (n_qubits,) after projection (see model below)
+        # 1) Angle encoding (RY)
+        for i in range(n_qubits):
+            qml.RY(inputs[i], wires=i)
+
+        # 2) Variational block(s)
+        #    - Local rotations
+        #    - Ring entanglement
+        for l in range(n_layers):
+            for i in range(n_qubits):
+                qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
+            for i in range(n_qubits - 1):
+                qml.CNOT(wires=[i, i + 1])
+            qml.CNOT(wires=[n_qubits - 1, 0])
+
+        # 3) Measurements -> produce q_out features
+        #    First, Z expectations on as many wires as possible;
+        #    if more features are requested, add ZZ neighbor correlators.
+        outputs = []
+        take_z = min(q_out, n_qubits)
+        for i in range(take_z):
+            outputs.append(qml.expval(qml.PauliZ(i)))
+        for k in range(q_out - take_z):
+            a = k % n_qubits
+            b = (a + 1) % n_qubits
+            outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
+        return outputs
+
+    x = torch.zeros(n_qubits)  # dummy input
+    w = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
+
+    qml.draw_mpl(circuit)(x, w)
+    plt.show()
+
+    # Tell TorchLayer how big the trainable tensor "weights" is
+    weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+    qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
+    return qlayer
+
+
+def make_quantum_layer(
+    n_qubits: int, n_layers: int, q_out: int, diff_method: str = "best"
+):
+    """
+    Quantum feature extractor with:
+      - data re-uploading (inputs injected each layer),
+      - alternating entanglement (ring on even layers, ladder/pairing on odd),
+      - measurements in X, Y, Z per qubit (then ZZ correlators if more outputs needed).
+
+    Returns a qml.qnn.TorchLayer that accepts shape [batch, n_qubits] and returns [batch, q_out].
+    """
+    dev = qml.device("default.qubit", wires=n_qubits)
+
+    @qml.qnode(dev, interface="torch", diff_method=diff_method)
+    def circuit(inputs, weights):
+        # inputs: vector length n_qubits (one shot / one sample)
+        # initial encoding (can be small — we re-upload in each layer)
+        for i in range(n_qubits):
+            qml.RY(inputs[i], wires=i)
+
+        # variational blocks with data re-uploading and alternating entanglers
+        for l in range(n_layers):
+            # parametric single-qubit rotations (trainable)
+            for i in range(n_qubits):
+                # Rot is expressive (3 params per qubit)
+                qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
+
+            # alternating entanglement:
+            if (l % 2) == 0:
+                # even layer: ring entangler 0-1,1-2,...,n-1-0
+                for i in range(n_qubits - 1):
+                    qml.CNOT(wires=[i, i + 1])
+                qml.CNOT(wires=[n_qubits - 1, 0])
+            else:
+                # odd layer: ladder / pair entangler (0-1,2-3,4-5,...). wrap last if odd count
+                i = 0
+                while i + 1 < n_qubits:
+                    qml.CNOT(wires=[i, i + 1])
+                    i += 2
+                if n_qubits % 2 == 1:
+                    # connect last qubit with qubit 0 to avoid isolation
+                    qml.CNOT(wires=[n_qubits - 1, 0])
+
+            # data re-uploading: re-inject the classical inputs (as small rotations)
+            for i in range(n_qubits):
+                qml.RZ(
+                    inputs[i] * 0.5, wires=i
+                )  # small extra encoding in a different axis
+
+        # build outputs: X, Y, Z per qubit (ordered per qubit)
+        outputs = []
+        for i in range(n_qubits):
+            outputs.append(qml.expval(qml.PauliX(i)))
+            outputs.append(qml.expval(qml.PauliY(i)))
+            outputs.append(qml.expval(qml.PauliZ(i)))
+
+        # if more outputs required than 3*n_qubits, add ZZ correlators
+        base = 3 * n_qubits
+        if q_out > base:
+            extra_needed = q_out - base
+            k = 0
+            while k < extra_needed:
+                a = k % n_qubits
+                b = (a + 1) % n_qubits
+                outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
+                k += 1
+
+        # return only up to q_out features (if caller set q_out smaller)
+        return outputs[:q_out]
+
+    x = torch.zeros(n_qubits)  # dummy input
+    w = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
+
+    qml.draw_mpl(circuit)(x, w)
+    plt.show()
+
+    # Tell TorchLayer how big the trainable tensor "weights" is
+    weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+    qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
+    return qlayer
 
 
 class QNN_01(nn.Module):
@@ -98,7 +229,9 @@ class QNN_01(nn.Module):
         self.projector = nn.Linear(
             self.latent_dim, self.n_qubits, bias=True
         )  # linear layer to project to n_qubits
-        self.qlayer = ...  # Define your quantum layer here
+        self.qlayer = make_quantum_layer(
+            n_qubits=self.n_qubits, n_layers=4, q_out=2 * channels
+        )
 
         # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
         self.feature_heads = nn.ModuleList()
@@ -145,12 +278,14 @@ class QNN_01(nn.Module):
 
         enc = cnn_enc + fc_enc
 
-        enc = self.projector(enc)  # project to n_qubits
-        enc = self.qlayer(enc)  # apply quantum layer
+        angles = self.projector(enc)  # project to n_qubits
+        angles = torch.tanh(angles) * np.pi  # map to [-pi, pi]
+        # q_feats = self.qlayer(angles)  # [B, q_out]
+        q_feats = torch.stack([self.qlayer(a) for a in angles], dim=0)  # no batching
 
         feature_outputs = []
         for feature_head in self.feature_heads:
-            feature_output = feature_head(enc)
+            feature_output = feature_head(q_feats)
             # apply softplus to the second output (sigma^2)
             feature_outputs.append(feature_output)
 
@@ -181,15 +316,15 @@ class QNN_01(nn.Module):
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = None
+    n_load = 5_000
 
     hparams = {
-        "model_class": "QNN_01",
+        "model_class": QNN_01,
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load,
         "batch_size": 32,
         "val_batch_size": 128,
-        "in_length": 50,
+        "in_length": 51,
         "n_out_features": 6,
         "in_channels": 1,
         "num_blocks": 3,
@@ -200,6 +335,8 @@ if __name__ == "__main__":
         "feature_heads_dims": [300, 200],
         "alpha": 1.0,
         "dropout": 0.1,
+        "n_qubits": 6,
+        "lr": 1e-3,
     }
 
     lit_logdir = Path("lightning_logs") / hparams["model_class"].__name__
@@ -213,7 +350,8 @@ if __name__ == "__main__":
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
         max_epochs=20,
-        accelerator="gpu",
+        # accelerator="gpu",
+        accelerator="cpu",
         devices=1,
         logger=logger,
         callbacks=callbacks,
