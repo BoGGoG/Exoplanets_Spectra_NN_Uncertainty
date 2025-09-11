@@ -111,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, help="Path to the configuration file", required=True
     )
-    predict = False
+    predict = True
     args = parser.parse_args()
     config = read_config(args.config)
     if predict:
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     nrows = None if nrows == -1 else nrows
     spectra = pd.read_csv(
         inference_data_path,
-        index_col=0,
+        # index_col=0,
         nrows=nrows,
     ).values
     print(f"Loaded inference data with shape {spectra.shape}")
@@ -394,7 +394,95 @@ if __name__ == "__main__":
         # plt.grid()
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
-    plot_path = plots_dir / "uncertainty_estimates_vs_true_std_horizontal.png"
+    plot_path = plots_dir / "uncertainty_estimates_vs_true_std.png"
+    plt.savefig(plot_path)
+    plt.close()
+
+    ########################################################################################
+    # same, but only RMSE and epistemic uncertainty.
+    # Epistemic with different axis on the right side
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 7), layout="constrained"
+    )
+    axs = axs.flatten()
+    n_bins = 25
+
+    for i_pred_var in range(n_vars):
+        bins = np.linspace(
+            min(y_test[:, i_pred_var]), max(y_test[:, i_pred_var]), n_bins
+        )
+        bin_labels_stds = []  # std of true values in each bin
+        bin_sigmas = []  # mean aleatoric uncertainty in each bin
+        bin_epistemics = []  # mean epistemic uncertainty in each bin
+        bin_rmse = []  # error (rmse) in each bin
+        bin_centers = []
+        prediction_diffs = y_pred[:, i_pred_var] - y_test[:, i_pred_var]
+        for i in range(len(bins) - 1):
+            bin_mask = (y_test[:, i_pred_var] >= bins[i]) & (
+                y_test[:, i_pred_var] < bins[i + 1]
+            )
+            if np.any(bin_mask):
+                bin_labels_std = np.std(y_test[bin_mask, i_pred_var])
+                bin_sigma = np.sqrt(np.mean(aleatoric_var[bin_mask, i_pred_var]))
+                bin_epistemic = np.sqrt(np.mean(epistemic_var[bin_mask, i_pred_var]))
+                bin_rmse_i = np.sqrt(np.mean(prediction_diffs[bin_mask] ** 2))
+                bin_labels_stds.append(bin_labels_std)
+                bin_sigmas.append(bin_sigma)
+                bin_epistemics.append(bin_epistemic)
+                bin_rmse.append(bin_rmse_i)
+                bin_center = 0.5 * (bins[i] + bins[i + 1])
+                bin_centers.append(bin_center)
+            else:
+                bin_labels_stds.append(np.nan)
+                bin_sigmas.append(np.nan)
+                bin_epistemics.append(np.nan)
+                bin_rmse.append(np.nan)
+                bin_center = 0.5 * (bins[i] + bins[i + 1])
+                bin_centers.append(bin_center)
+        bin_centers = np.array(bin_centers)
+        bin_labels_std = np.array(bin_labels_stds)
+        bin_sigmas = np.array(bin_sigmas)
+        bin_epistemics = np.array(bin_epistemics)
+        bin_rmse = np.array(bin_rmse)
+
+        plt.sca(axs[i_pred_var])
+        var_name = var_names[i_pred_var]
+
+        # plt.plot(
+        #     bin_centers,
+        #     bin_sigmas,
+        #     label=r"Aleatoric Unc. $\sigma_\mathrm{A}$",
+        #     color="orange",
+        #     marker="o",
+        # )
+        plt.plot(bin_centers, bin_rmse, label="RMSE", color="red", marker="s")
+        plt.xlabel(f"True {var_name}")
+        plt.ylabel(f"{var_name} RMSE", color="red")
+        plt.tick_params(axis="y", labelcolor="red")
+        twin_ax = axs[i_pred_var].twinx()
+        twin_ax.plot(
+            bin_centers,
+            bin_epistemics,
+            label=r"Epistemic Unc. $\sigma_\mathrm{E}$",
+            color="blue",
+            marker="^",
+        )
+        twin_ax.set_ylabel(f"{var_name} Epistemic Unc.", color="blue")
+        twin_ax.tick_params(axis="y", labelcolor="blue")
+        # sum of aleatoric and epistemic
+        # plt.plot(
+        #     bin_centers,
+        #     np.sqrt(bin_sigmas**2 + bin_epistemics**2),
+        #     label=r"Total Unc. $\sqrt{\sigma_\mathrm{A}^2 + \sigma_\mathrm{E}^2}$",
+        #     color="black",
+        #     marker="D",
+        #     ls="--",
+        # )
+        lines, labels = axs[i_pred_var].get_legend_handles_labels()
+        lines2, labels2 = twin_ax.get_legend_handles_labels()
+        twin_ax.legend(lines + lines2, labels + labels2) if i_pred_var == 0 else None
+        # plt.grid()
+    plot_path = plots_dir / "uncertainty_estimates_vs_rmse_twin.png"
     plt.savefig(plot_path)
     plt.close()
 
@@ -556,7 +644,7 @@ if __name__ == "__main__":
         if i_pred_var > 1:  # no ytick labels for all but first two plots
             axs[i_pred_var].set_yticklabels([])
 
-    plt.suptitle(r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {10} models")
+    plt.suptitle(r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {15} models")
 
     plt.tight_layout()
     plt.subplots_adjust(wspace=0.2)

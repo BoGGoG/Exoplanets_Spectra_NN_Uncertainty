@@ -70,7 +70,7 @@ def setup_Model_03_hparams(
         "n_load_train": n_load_train,
         "batch_size": 2**k_batchsize,
         "val_batch_size": 512,
-        "in_length": 50,
+        "in_length": 51,
         "n_out_features": 6,
         "in_channels": 1,
         "lr": 1e-3 * (2**k_batchsize) / 32,  # scale lr with batch size
@@ -129,7 +129,7 @@ def setup_CNNTimeSeriesRegressor_hparams(
         "n_load_train": n_load_train,
         "batch_size": 2**k_batchsize,
         "val_batch_size": 512,
-        "in_length": 50,
+        "in_length": 51,
         "n_out_features": 6,
         "in_channels": 1,
         "lr": 1e-3 * (2**k_batchsize) / 32,  # scale lr with batch size

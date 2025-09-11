@@ -273,7 +273,7 @@ def main():
 
     out_dir = config.get("ENSEMBLE", "ensemble_savedir")
     if out_dir:
-        models_save_dir = out_dir / "models"
+        models_save_dir = os.path.join(out_dir, "models")
     else:
         models_save_dir = os.path.join(
             config.get("DIRECTORIES", "rundir"), "out", "ensemble", "models"

@@ -465,7 +465,9 @@ class Model_Lit(L.LightningModule):
         super(Model_Lit, self).__init__()
 
         model_class = hparams["model_class"]
-        model_class = model_registry[model_class]
+        model_class = (
+            model_registry[model_class] if isinstance(model_class, str) else model_class
+        )
         self.model = model_class(hparams, verbose=verbose)
         self.alpha = hparams["alpha"]
         self.save_hyperparameters(hparams)
@@ -493,7 +495,7 @@ class Model_Lit(L.LightningModule):
 
         if (stage == "fit" or stage is None) and not self.setup_performed_train:
             spectra_train = pd.read_csv(
-                path_spectra_train, index_col=0, nrows=hparams["n_load_train"]
+                path_spectra_train, nrows=hparams["n_load_train"]
             ).values
             labels_train = pd.read_csv(path_labels_train, nrows=hparams["n_load_train"])
             self.labels_names = labels_train.columns.tolist()
@@ -532,7 +534,7 @@ class Model_Lit(L.LightningModule):
 
         if stage == "test" and not self.setup_performed_test:
             spectra_test = pd.read_csv(
-                path_spectra_test, index_col=0, nrows=hparams["n_load_train"]
+                path_spectra_test, nrows=hparams["n_load_train"]
             ).values
             labels_test = pd.read_csv(
                 path_labels_test, nrows=hparams["n_load_train"]
