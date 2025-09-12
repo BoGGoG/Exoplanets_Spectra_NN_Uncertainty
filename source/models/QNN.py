@@ -316,7 +316,7 @@ class QNN_01(nn.Module):
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 5_000
+    n_load = 500
 
     hparams = {
         "model_class": QNN_01,
@@ -328,14 +328,14 @@ if __name__ == "__main__":
         "n_out_features": 6,
         "in_channels": 1,
         "num_blocks": 3,
-        "base_channels": 32,
+        "base_channels": 64,
         "cnn_enc_kernel_size": 7,
         "cnn_enc_stride": 2,
-        "fc_enc_hidden_dims": [300, 300],
-        "feature_heads_dims": [300, 200],
+        "fc_enc_hidden_dims": [450],
+        "feature_heads_dims": [300, 500, 400],
         "alpha": 1.0,
         "dropout": 0.1,
-        "n_qubits": 6,
+        "n_qubits": 8,
         "lr": 1e-3,
     }
 
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     model = Model_Lit(hparams)
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
-        max_epochs=20,
+        max_epochs=1,
         # accelerator="gpu",
         accelerator="cpu",
         devices=1,

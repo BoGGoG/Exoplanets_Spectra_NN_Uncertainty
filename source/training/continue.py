@@ -22,6 +22,7 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
+from source.models.QNN import QNN_01
 
 torch.set_float32_matmul_precision("highest")  # or "high"
 
@@ -174,7 +175,7 @@ def continue_training_best_model(
             config.get("MODEL", "model_class"),
         ),
         callbacks=callbacks,
-        gradient_clip_val=model.hparams["max_norm_clip"],
+        gradient_clip_val=model.hparams.get("max_norm_clip", 1.0),
         precision=config.get("GENERAL", "precision"),
     )
     if config.getboolean("MODEL", "compile"):
