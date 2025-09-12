@@ -111,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, help="Path to the configuration file", required=True
     )
-    predict = True
+    predict = False
     args = parser.parse_args()
     config = read_config(args.config)
     if predict:
@@ -893,62 +893,82 @@ if __name__ == "__main__":
 
     ###################################################################################################
     # scatter plot of true value vs RMSE/predicted uncertainty for each variable
-    fig, axs = plt.subplots(
-        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
-    )
-    axs = axs.flatten()
-    for i_pred_var in range(n_vars):
-        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
-            aleatoric_var[:, i_pred_var]
+    # colorcoding: true value of the Temperature (blue=low, red=high)
+    color_names = ["temp", "H2O", "CO2", "CH4", "CO", "NH3"]
+    for i_color in range(n_vars):
+        fig, axs = plt.subplots(
+            2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
         )
-        x_plot = y_test[:, i_pred_var]
-        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
-        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
-        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
-        y_max_plot = y_plot.max()
-        y_min_plot = y_plot.min()
-        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
-        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
-        axs[i_pred_var].scatter(x_plot, y_plot, s=1, color="blue")
-        axs[i_pred_var].set_xlabel(r"True Value")
-        axs[i_pred_var].set_ylabel(
-            r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+        axs = axs.flatten()
+        color_vals = y_test[:, i_color]
+        cmap = plt.get_cmap("jet")
+
+        for i_pred_var in range(n_vars):
+            y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+                aleatoric_var[:, i_pred_var]
+            )
+            x_plot = y_test[:, i_pred_var]
+            axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+            y_max_plot = y_plot.max()
+            y_min_plot = y_plot.min()
+            axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+            axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+            axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_vals, cmap=cmap)
+            axs[i_pred_var].set_xlabel(r"True Value")
+            axs[i_pred_var].set_ylabel(
+                r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+            )
+            axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        plt.suptitle("True Value vs. Error/Aleatoric Uncertainty")
+        plot_path = (
+            plots_dir
+            / "true_vs_rmse_scatter"
+            / f"true_value_vs_rmse_over_aleatoric_uncertainty_color_{color_names[i_color]}.png"
         )
-        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
-    plt.suptitle("True Value vs. Error/Aleatoric Uncertainty")
-    plot_path = plots_dir / "true_value_vs_rmse_over_aleatoric_uncertainty.png"
-    plt.savefig(plot_path)
-    print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
-    plt.close(fig)
+        os.makedirs(plot_path.parent, exist_ok=True)
+        plt.savefig(plot_path)
+        print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
+        plt.close(fig)
 
     # same for epistemic
-    fig, axs = plt.subplots(
-        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
-    )
-    axs = axs.flatten()
-    for i_pred_var in range(n_vars):
-        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
-            epistemic_var[:, i_pred_var]
+    for i_color in range(n_vars):
+        fig, axs = plt.subplots(
+            2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
         )
-        x_plot = y_test[:, i_pred_var]
-        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
-        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
-        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
-        y_max_plot = y_plot.max()
-        y_min_plot = y_plot.min()
-        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
-        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
-        axs[i_pred_var].scatter(x_plot, y_plot, s=1, color="blue")
-        axs[i_pred_var].set_xlabel(r"True Value")
-        axs[i_pred_var].set_ylabel(
-            r"($y_\text{pred} - y_\text{true})$ / Epistemic Unc."
+        axs = axs.flatten()
+        color_vals = y_test[:, i_color]
+        cmap = plt.get_cmap("jet")
+
+        for i_pred_var in range(n_vars):
+            y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+                epistemic_var[:, i_pred_var]
+            )
+            x_plot = y_test[:, i_pred_var]
+            axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+            y_max_plot = y_plot.max()
+            y_min_plot = y_plot.min()
+            axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+            axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+            axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_vals, cmap=cmap)
+            axs[i_pred_var].set_xlabel(r"True Value")
+            axs[i_pred_var].set_ylabel(
+                r"($y_\text{pred} - y_\text{true})$ / Epistemic Unc."
+            )
+            axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        plt.suptitle("True Value vs. Error/Epistemic Uncertainty")
+        plot_path = (
+            plots_dir
+            / "true_vs_rmse_scatter"
+            / f"true_value_vs_rmse_over_epistemic_uncertainty_color_{color_names[i_color]}.png"
         )
-        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
-    plt.suptitle("True Value vs. Error/Epistemic Uncertainty")
-    plot_path = plots_dir / "true_value_vs_rmse_over_epistemic_uncertainty.png"
-    plt.savefig(plot_path)
-    print(f"Saved true value vs rmse/epistemic uncertainty plot to {plot_path}")
-    plt.close(fig)
+        os.makedirs(plot_path.parent, exist_ok=True)
+        plt.savefig(plot_path)
+        print(f"Saved true value vs rmse/epistemic uncertainty plot to {plot_path}")
+        plt.close(fig)
 
     # same for full uncertainty
     fig, axs = plt.subplots(
@@ -977,6 +997,185 @@ if __name__ == "__main__":
     plot_path = plots_dir / "true_value_vs_rmse_over_full_uncertainty.png"
     plt.savefig(plot_path)
     print(f"Saved true value vs rmse/ep.+al. uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same plot for aleatoric uncertainty, but only those where the temperature prediction is bad
+    # bad means absolute error > 500
+    for i_color in range(n_vars):
+        fig, axs = plt.subplots(
+            2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+        )
+        axs = axs.flatten()
+        color_vals = y_test[:, i_color]
+        cmap = plt.get_cmap("jet")
+
+        for i_pred_var in range(n_vars):
+            y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+                aleatoric_var[:, i_pred_var]
+            )
+            x_plot = y_test[:, i_pred_var]
+            T_pred = y_pred[:, 0]
+            mask_bad_T = np.abs(T_pred - y_test[:, 0]) > 500
+            x_plot = x_plot[mask_bad_T]
+            y_plot = y_plot[mask_bad_T]
+            axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+            y_max_plot = y_plot.max()
+            y_min_plot = y_plot.min()
+            axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+            axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+            axs[i_pred_var].scatter(
+                x_plot, y_plot, s=12, c=color_vals[mask_bad_T], cmap=cmap
+            )
+            axs[i_pred_var].set_xlabel(r"True Value")
+            axs[i_pred_var].set_ylabel(
+                r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+            )
+            axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        plt.suptitle("True Value vs. Error/Aleatoric Uncertainty (only bad Tpred)")
+        plot_path = (
+            plots_dir
+            / "true_vs_rmse_scatter_bad_Tpred"
+            / f"true_value_vs_rmse_over_aleatoric_uncertainty_color_{color_names[i_color]}_only_bad_Tpred.png"
+        )
+        os.makedirs(plot_path.parent, exist_ok=True)
+        plt.savefig(plot_path)
+        print(
+            f"Saved true value vs rmse/aleatoric uncertainty (only bad Tpred) plot to {plot_path}"
+        )
+        plt.close(fig)
+
+    # same for epistemic
+    for i_color in range(n_vars):
+        fig, axs = plt.subplots(
+            2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+        )
+        axs = axs.flatten()
+        color_vals = y_test[:, i_color]
+        cmap = plt.get_cmap("jet")
+
+        for i_pred_var in range(n_vars):
+            y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+                epistemic_var[:, i_pred_var]
+            )
+            x_plot = y_test[:, i_pred_var]
+            T_pred = y_pred[:, 0]
+            mask_bad_T = np.abs(T_pred - y_test[:, 0]) > 500
+            x_plot = x_plot[mask_bad_T]
+            y_plot = y_plot[mask_bad_T]
+            axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+            axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+            y_max_plot = y_plot.max()
+            y_min_plot = y_plot.min()
+            axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+            axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+            axs[i_pred_var].scatter(
+                x_plot, y_plot, s=12, c=color_vals[mask_bad_T], cmap=cmap
+            )
+            axs[i_pred_var].set_xlabel(r"True Value")
+            axs[i_pred_var].set_ylabel(
+                r"($y_\text{pred} - y_\text{true})$ / Epistemic Unc."
+            )
+            axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+        plt.suptitle("True Value vs. Error/Epistemic Uncertainty (only bad Tpred)")
+        plot_path = (
+            plots_dir
+            / "true_vs_rmse_scatter_bad_Tpred"
+            / f"true_value_vs_rmse_over_epistemic_uncertainty_color_{color_names[i_color]}_only_bad_Tpred.png"
+        )
+        os.makedirs(plot_path.parent, exist_ok=True)
+        plt.savefig(plot_path)
+        print(
+            f"Saved true value vs rmse/epistemic uncertainty (only bad Tpred) plot to {plot_path}"
+        )
+        plt.close(fig)
+
+    # same plot, but for each target variable, the color is chosen according to the largest value of the other variables (except temperature)
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    color_vals = y_test
+    cmap = plt.get_cmap("jet")
+
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            aleatoric_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        # all except the current variable and temperature
+        color_i = color_vals[:, [j for j in range(1, n_vars) if j != i_pred_var]]
+        color_i = color_i.max(axis=1)
+        sc = axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_i, cmap=cmap)
+        fig.colorbar(sc, ax=axs[i_pred_var], label="Largest other conc.")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(
+            r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle(
+        "True Value vs. Error/Aleatoric Uncertainty (color=largest other concentration)"
+    )
+    plot_path = (
+        plots_dir
+        / "true_vs_rmse_scatter"
+        / "true_value_vs_rmse_over_aleatoric_uncertainty_color_largest_other_concentration.png"
+    )
+    os.makedirs(plot_path.parent, exist_ok=True)
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # same plot, but for each target variable, the color is chosen according to the sum other variables (except temperature)
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    color_vals = y_test
+    cmap = plt.get_cmap("jet")
+
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            aleatoric_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        # all except the current variable and temperature
+        color_i = color_vals[:, [j for j in range(1, n_vars) if j != i_pred_var]]
+        color_i = color_i.sum(axis=1)
+        sc = axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_i, cmap=cmap)
+        fig.colorbar(sc, ax=axs[i_pred_var], label="Sum of other conc.")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(
+            r"($y_\text{pred} - y_\text{true})$ / Aleatoric Unc."
+        )
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle(
+        "True Value vs. Error/Aleatoric Uncertainty (color=sum of other concentrations)"
+    )
+    plot_path = (
+        plots_dir
+        / "true_vs_rmse_scatter"
+        / "true_value_vs_rmse_over_aleatoric_uncertainty_color_sum_other_concentrations.png"
+    )
+    os.makedirs(plot_path.parent, exist_ok=True)
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
     plt.close(fig)
 
     ##########################################################################
