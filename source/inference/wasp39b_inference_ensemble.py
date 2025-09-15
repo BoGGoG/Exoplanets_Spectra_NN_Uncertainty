@@ -27,6 +27,7 @@ from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_regis
 from source.training.optimizers import cosine_decay_scheduler
 from source.utils import var_names
 from scipy.interpolate import interp1d
+from scipy.signal import savgol_filter
 
 plt.style.use(["science", "grid"])
 mpl.rcParams.update(
@@ -72,7 +73,12 @@ if __name__ == "__main__":
         / "models"
         / "ckpt"
     )
-    plots_savedir = ensemble_savedir.parent.parent / "plots" / "wasp39b"
+    plots_savedir = (
+        ensemble_savedir.parent.parent
+        / "plots"
+        # / "wasp39b_nearest_interpolation"
+        / "wasp39b_savgol_04_02_linear_interpolation"
+    )
     os.makedirs(plots_savedir, exist_ok=True)
     models_paths = os.listdir(ensemble_savedir)
     models_paths = [f for f in models_paths if f.endswith(".ckpt")]
@@ -93,14 +99,17 @@ if __name__ == "__main__":
     train_wavelengths_file = Path("data") / "cleaned_up_version" / "wavelengths.npy"
     train_wavelengths = np.load(train_wavelengths_file)
 
+    # todo: try savgol filter for smoothing
+    wasp_39b_flux_original = wasp39b_flux.copy()
+    wasp39b_flux = savgol_filter(wasp39b_flux, 4, 2)
+
     f_interp = interp1d(
         wasp39b_wavelengths,
         wasp39b_flux,
-        kind="cubic",
+        kind="linear",  # cubic, quadratic, linear, nearest
         bounds_error=False,
         fill_value="extrapolate",
     )
-    # todo: try savgol filter for smoothing
     wasp39b_flux_resampled = f_interp(train_wavelengths)
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -108,12 +117,25 @@ if __name__ == "__main__":
         wasp39b_wavelengths,
         wasp39b_flux,
         color="b",
-        label="WASP-39b Observation",
+        label="WASP-39b Observation (after SavGol filter)"
+        if wasp39b_flux is not wasp_39b_flux_original
+        else "WASP-39b Observation",
         marker="o",
         markersize=2,
         alpha=0.3,
         linewidth=1.5,
     )
+    if wasp39b_flux is not wasp_39b_flux_original:
+        plt.plot(
+            wasp39b_wavelengths,
+            wasp_39b_flux_original,
+            color="gray",
+            label="WASP-39b Observation",
+            marker="o",
+            markersize=2,
+            alpha=0.3,
+            linewidth=1.5,
+        )
     plt.plot(
         train_wavelengths,
         wasp39b_flux_resampled,
@@ -237,9 +259,19 @@ if __name__ == "__main__":
             s=100,
             label="Forestano et al. (2025)" if i == 1 else "",
         )
+        # in text box (bottom left corner) put the value of the prediction and the forestano value
+        plt.text(
+            i - 0.1,
+            mus_mean[i] - 2.4,
+            f"{mus_mean[i]:.2f} (+/- {np.sqrt(aleatoric_sigma2[i]):.2f}a, {np.sqrt(epistemic_sigma2[i]):.2f}e) \n({predictions_forestano[i]:.2f} F2025)",
+            ha="left",
+            va="top",
+            fontsize=10,
+            bbox=dict(facecolor="white", alpha=0.5, edgecolor="none"),
+        )
     # remove ticks and add variable names
     plt.legend()
-    plt.title("WASP-39b Inference with Ensemble of Models")
+    plt.title("WASP-39b Inference with Ensemble of Models (+/- alea., +/- epis.)")
     plt.xticks(range(1, len(var_names)), var_names[1:], rotation=45, ha="right")
     plt.ylabel("log concentration")
     plotpath = plots_savedir / "wasp39b_inference_ensemble.png"
