@@ -500,15 +500,28 @@ class Model_Lit(L.LightningModule):
             labels_train = pd.read_csv(path_labels_train, nrows=hparams["n_load_train"])
             self.labels_names = labels_train.columns.tolist()
             labels_train = labels_train.values
+            labels_train_original = labels_train.copy()
             labels_train = self.scaler.fit_transform(labels_train)
             self.scaler_mean = self.scaler.mean_
             self.scaler_var = self.scaler.var_
             print(f"Loaded training spectra with shape: {spectra_train.shape}")
             print(f"Loaded training labels with shape: {labels_train.shape}")
             print(f"{self.scaler_mean=}, {self.scaler_var=}")
+            # add scaler mean and scaler var to hparams for logging
+            self.hparams["scaler_mean"] = self.scaler_mean
+            self.hparams["scaler_var"] = self.scaler_var
 
             spectra_train = torch.tensor(spectra_train, dtype=torch.float32)
             labels_train = torch.tensor(labels_train, dtype=torch.float32)
+
+            # from train data, throw away all where H20 is >-4
+            print("Throwing away all training data where H2O > -4")
+            print(f"Initial number of training samples: {spectra_train.shape[0]}")
+            idx_h2o = 1
+            idx_keep = labels_train_original[:, idx_h2o] <= -4.0
+            spectra_train = spectra_train[idx_keep]
+            labels_train = labels_train[idx_keep]
+            print(f"Number of training samples after cut: {spectra_train.shape[0]}")
 
             # train val split
             generator = torch.Generator().manual_seed(42)

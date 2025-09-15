@@ -40,6 +40,9 @@ def load_models(config):
     )
     models_names = os.listdir(ensemble_directory)
 
+    # only files that end with .ckpt
+    models_names = [m for m in models_names if m.endswith(".ckpt")]
+
     models = []
     for m in models_names:
         print(f"Loading model from {ensemble_directory / m}")
@@ -111,7 +114,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, help="Path to the configuration file", required=True
     )
-    predict = False
+    predict = True
     args = parser.parse_args()
     config = read_config(args.config)
     if predict:
@@ -1176,6 +1179,88 @@ if __name__ == "__main__":
     os.makedirs(plot_path.parent, exist_ok=True)
     plt.savefig(plot_path)
     print(f"Saved true value vs rmse/aleatoric uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # now with epistemic uncertainty
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    color_vals = y_test
+    cmap = plt.get_cmap("jet")
+
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            epistemic_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        # all except the current variable and temperature
+        color_i = color_vals[:, [j for j in range(1, n_vars) if j != i_pred_var]]
+        color_i = color_i.max(axis=1)
+        sc = axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_i, cmap=cmap)
+        fig.colorbar(sc, ax=axs[i_pred_var], label="Largest other conc.")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(r"($y_\text{pred} - y_\text{true})$ / Epist. Unc.")
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle(
+        "True Value vs. Error/Epistemic Uncertainty (color=largest other concentration)"
+    )
+    plot_path = (
+        plots_dir
+        / "true_vs_rmse_scatter"
+        / "true_value_vs_rmse_over_epistemic_uncertainty_color_largest_other_concentration.png"
+    )
+    os.makedirs(plot_path.parent, exist_ok=True)
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/epistemic uncertainty plot to {plot_path}")
+    plt.close(fig)
+
+    # now with sum
+    fig, axs = plt.subplots(
+        2, n_vars // 2, figsize=(2.5 * n_vars, 8), layout="constrained"
+    )
+    axs = axs.flatten()
+    color_vals = y_test
+    cmap = plt.get_cmap("jet")
+
+    for i_pred_var in range(n_vars):
+        y_plot = (y_pred[:, i_pred_var] - y_test[:, i_pred_var]) / np.sqrt(
+            epistemic_var[:, i_pred_var]
+        )
+        x_plot = y_test[:, i_pred_var]
+        axs[i_pred_var].axhline(1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhline(-1, ls="--", color="gray", lw=2)
+        axs[i_pred_var].axhspan(-1, 1, color="lightgreen", alpha=0.5)
+        y_max_plot = y_plot.max()
+        y_min_plot = y_plot.min()
+        axs[i_pred_var].axhspan(1, y_max_plot, color="red", alpha=0.2)
+        axs[i_pred_var].axhspan(y_min_plot, -1, color="red", alpha=0.2)
+        # all except the current variable and temperature
+        color_i = color_vals[:, [j for j in range(1, n_vars) if j != i_pred_var]]
+        color_i = color_i.sum(axis=1)
+        sc = axs[i_pred_var].scatter(x_plot, y_plot, s=1, c=color_i, cmap=cmap)
+        fig.colorbar(sc, ax=axs[i_pred_var], label="Sum of other conc.")
+        axs[i_pred_var].set_xlabel(r"True Value")
+        axs[i_pred_var].set_ylabel(r"($y_\text{pred} - y_\text{true})$ / Epist. Unc.")
+        axs[i_pred_var].set_title(f"{var_names[i_pred_var]}")
+    plt.suptitle(
+        "True Value vs. Error/Epistemic Uncertainty (color=sum of other concentrations)"
+    )
+    plot_path = (
+        plots_dir
+        / "true_vs_rmse_scatter"
+        / "true_value_vs_rmse_over_epistemic_uncertainty_color_sum_other_concentrations.png"
+    )
+    os.makedirs(plot_path.parent, exist_ok=True)
+    plt.savefig(plot_path)
+    print(f"Saved true value vs rmse/epistemic uncertainty plot to {plot_path}")
     plt.close(fig)
 
     ##########################################################################

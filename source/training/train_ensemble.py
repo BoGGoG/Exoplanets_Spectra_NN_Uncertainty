@@ -245,6 +245,8 @@ def main():
     run_dir = config["DIRECTORIES"]["rundir"]
     db_file_path = os.path.join(run_dir, "out", "final", "optuna", f"{model_class}.db")
     optuna_log_dir = f"sqlite:///{db_file_path}"
+    out_dir = config.get("ENSEMBLE", "ensemble_savedir")
+
     if config.get("ENSEMBLE", "use_pretrained", fallback="false").lower() != "false":
         print(
             "Using pretrained model from {}".format(
@@ -270,8 +272,6 @@ def main():
     print(losses)
 
     # save ensemble to disk
-
-    out_dir = config.get("ENSEMBLE", "ensemble_savedir")
     if out_dir:
         models_save_dir = os.path.join(out_dir, "models")
     else:
