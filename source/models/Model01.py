@@ -16,7 +16,9 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
 from collections import namedtuple
+
 # from source.models.QNN import QNN_01
+from torchvision.transforms.v2 import GaussianNoise
 
 
 # model output as named tuple instead of dict, because of some logging issues with dicts
@@ -260,7 +262,9 @@ class CNNTimeSeriesRegressor(nn.Module):
         self.normalizer = MeanStdNormalizer()
         self.input_length = hparams["in_length"]
         self.dropout_val = hparams["dropout"]
+        self.input_noise = hparams.get("input_noise", 0.0)
 
+        print(f"Using input noise of {self.input_noise}")
         layers = []
         channels = in_channels
         for i in range(num_blocks):
@@ -320,9 +324,11 @@ class CNNTimeSeriesRegressor(nn.Module):
 
     def forward(self, x):
         """
-        x: (batch, channels, seq_len)
+        x: (batch, seq_len)
         """
         x = self.normalizer(x)
+        if self.input_noise > 0.0 and self.training:
+            x = x + self.input_noise * torch.randn_like(x)
         x = x.unsqueeze(1)  # add channel dim
         z = self.cnn_encoder(x)  # (B, C, L')
 
@@ -515,13 +521,13 @@ class Model_Lit(L.LightningModule):
             labels_train = torch.tensor(labels_train, dtype=torch.float32)
 
             # from train data, throw away all where H20 is >-4
-            print("Throwing away all training data where H2O > -4")
-            print(f"Initial number of training samples: {spectra_train.shape[0]}")
-            idx_h2o = 1
-            idx_keep = labels_train_original[:, idx_h2o] <= -4.0
-            spectra_train = spectra_train[idx_keep]
-            labels_train = labels_train[idx_keep]
-            print(f"Number of training samples after cut: {spectra_train.shape[0]}")
+            # print("Throwing away all training data where H2O > -4")
+            # print(f"Initial number of training samples: {spectra_train.shape[0]}")
+            # idx_h2o = 1
+            # idx_keep = labels_train_original[:, idx_h2o] <= -4.0
+            # spectra_train = spectra_train[idx_keep]
+            # labels_train = labels_train[idx_keep]
+            # print(f"Number of training samples after cut: {spectra_train.shape[0]}")
 
             # train val split
             generator = torch.Generator().manual_seed(42)
