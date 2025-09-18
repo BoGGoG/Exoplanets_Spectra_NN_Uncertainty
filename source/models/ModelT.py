@@ -241,6 +241,8 @@ class ModelT_Lit(L.LightningModule):
         self.test_step_outputs = []
         self.labels_names = None
         self.model_history = []
+        self.register_buffer("x_mean", torch.zeros(hparams["in_length"]))
+        self.register_buffer("x_var", torch.zeros(hparams["in_length"]))
         # self.example_input_array = torch.randn(2, hparams["in_length"])
 
     def normalize(self, x):
@@ -278,8 +280,8 @@ class ModelT_Lit(L.LightningModule):
             spectra_vars = spectra_train.var(dim=0)
             print(f"{spectra_means.shape}")
             print(f"{spectra_vars.shape}")
-            self.register_buffer("x_mean", spectra_means)
-            self.register_buffer("x_var", spectra_vars)
+            self.x_mean.copy_(spectra_means)
+            self.x_var.copy_(spectra_vars)
 
             # from train data, throw away all where H20 is >-4
             # print("Throwing away all training data where H2O > -4")
@@ -480,7 +482,8 @@ class ModelT_Lit(L.LightningModule):
                     "frequency": 1,
                 },
             }
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams["lr"])
+        lr = self.hparams["lr"] or 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, factor=0.5, patience=5
         )
@@ -813,7 +816,7 @@ def train_model_02():
     logger = TensorBoardLogger(
         lit_logdir, name="Model_02", default_hp_metric=False, log_graph=True
     )
-    model = Model_Lit(hparams)
+    model = ModelT_Lit(hparams)
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
         max_epochs=20,
