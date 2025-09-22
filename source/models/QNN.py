@@ -31,53 +31,6 @@ ModelOutput = namedtuple("ModelOutput", ["mus", "sigmas2"])
 torch.set_float32_matmul_precision("highest")  # or "high"
 
 
-def make_quantum_layer_old(n_qubits: int, n_layers: int, q_out: int):
-    """Build a Torch-wrapped QNode that maps a latent vector -> q_out quantum features."""
-    dev = qml.device("default.qubit", wires=n_qubits)
-
-    # @qml.qnode(dev, interface="torch", diff_method="parameter-shift")
-    @qml.qnode(dev, interface="torch", diff_method="best")
-    def circuit(inputs, weights):
-        # inputs: shape (n_qubits,) after projection (see model below)
-        # 1) Angle encoding (RY)
-        for i in range(n_qubits):
-            qml.RY(inputs[i], wires=i)
-
-        # 2) Variational block(s)
-        #    - Local rotations
-        #    - Ring entanglement
-        for l in range(n_layers):
-            for i in range(n_qubits):
-                qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
-            for i in range(n_qubits - 1):
-                qml.CNOT(wires=[i, i + 1])
-            qml.CNOT(wires=[n_qubits - 1, 0])
-
-        # 3) Measurements -> produce q_out features
-        #    First, Z expectations on as many wires as possible;
-        #    if more features are requested, add ZZ neighbor correlators.
-        outputs = []
-        take_z = min(q_out, n_qubits)
-        for i in range(take_z):
-            outputs.append(qml.expval(qml.PauliZ(i)))
-        for k in range(q_out - take_z):
-            a = k % n_qubits
-            b = (a + 1) % n_qubits
-            outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
-        return outputs
-
-    x = torch.zeros(n_qubits)  # dummy input
-    w = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
-
-    qml.draw_mpl(circuit)(x, w)
-    plt.show()
-
-    # Tell TorchLayer how big the trainable tensor "weights" is
-    weight_shapes = {"weights": (n_layers, n_qubits, 3)}
-    qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
-    return qlayer
-
-
 def make_quantum_layer(
     n_qubits: int, n_layers: int, q_out: int, diff_method: str = "best"
 ):
@@ -230,7 +183,7 @@ class QNN_01(nn.Module):
             self.latent_dim, self.n_qubits, bias=True
         )  # linear layer to project to n_qubits
         self.qlayer = make_quantum_layer(
-            n_qubits=self.n_qubits, n_layers=4, q_out=2 * channels
+            n_qubits=self.n_qubits, n_layers=4, q_out=4 * self.n_qubits
         )
 
         # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
@@ -238,7 +191,7 @@ class QNN_01(nn.Module):
         feature_heads_dims = hparams["feature_heads_dims"]
         for i in range(self.out_features):
             feature_head = nn.Sequential()
-            current_dim = 2 * channels  # ToDo: change to
+            current_dim = 4 * self.n_qubits
             for j, hidden_dim in enumerate(feature_heads_dims):
                 feature_head.add_module(
                     f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
@@ -313,8 +266,165 @@ class QNN_01(nn.Module):
                 )
                 nn.init.zeros_(m.bias)
 
+class QNN_NoQ(nn.Module):
+    def __init__(
+        self,
+        hparams: dict,
+        verbose: bool = False,
+    ):
+        """
+        CNN + dense encoder for time series regression (sequence → scalar).
+        Same dimension reduction as for QNN_01, but no quantum layers.
+        This is to test if the quantum layer actually does anything or if it's just the dimension reduction.
 
-if __name__ == "__main__":
+        Args:
+            in_channels: number of input channels (features per timestep).
+            num_blocks: how many Conv blocks to stack.
+            base_channels: starting number of channels in first conv block.
+            hidden_dim: size of hidden layer in final MLP head.
+        """
+        super().__init__()
+
+        in_channels = hparams["in_channels"]
+        num_blocks = hparams["num_blocks"]
+        base_channels = hparams["base_channels"]
+        self.out_features = hparams["n_out_features"]
+        self.act = nn.ELU()
+        self.normalizer = MeanStdNormalizer()
+        self.input_length = hparams["in_length"]
+        self.dropout_val = hparams["dropout"]
+
+        layers = []
+        channels = in_channels
+        for i in range(num_blocks):
+            out_channels = base_channels * (2**i)  # 64 → 128 → 256 ...
+            dilation = 2**i  # 1, 2, 4 ...
+            layers.append(
+                nn.Sequential(
+                    nn.Conv1d(
+                        in_channels=channels,
+                        out_channels=out_channels,
+                        kernel_size=hparams["cnn_enc_kernel_size"],
+                        stride=hparams["cnn_enc_stride"],  # downsample
+                        padding=dilation * 3,
+                        dilation=dilation,
+                    ),
+                    nn.BatchNorm1d(out_channels),
+                    nn.SiLU(inplace=True),
+                    nn.Dropout(self.dropout_val),
+                )
+            )
+            channels = out_channels
+
+        self.cnn_encoder = nn.Sequential(*layers)
+
+        fc_hidden_dims = hparams["fc_enc_hidden_dims"]
+        self.fc_encoder = nn.Sequential()
+        current_dim = self.input_length
+        for i, hidden_dim in enumerate(fc_hidden_dims):
+            self.fc_encoder.add_module(f"fc_{i}", nn.Linear(current_dim, hidden_dim))
+            # self.fc.add_module(f"fc_{i}_batchnorm", nn.BatchNorm1d(hidden_dim))
+            self.fc_encoder.add_module(f"fc_{i}_act", self.act)
+            self.fc_encoder.add_module(f"fc_{i}_dropout", nn.Dropout(self.dropout_val))
+            current_dim = hidden_dim
+        # output same dimension as cnn_enc
+        self.fc_encoder.add_module(f"fc_last", nn.Linear(current_dim, 2 * channels))
+
+        # Quantum part
+        self.n_qubits = hparams["n_qubits"]
+        self.latent_dim = 2 * channels  # dimension of the input to the quantum layer
+        self.projector = nn.Linear(
+            self.latent_dim, self.n_qubits, bias=True
+        )  # linear layer to project to n_qubits
+        # self.qlayer = make_quantum_layer(
+        #     n_qubits=self.n_qubits, n_layers=4, q_out=4 * self.n_qubits
+        # )
+        self.qlayer_substitute = nn.Linear(self.n_qubits, 4 * self.n_qubits)
+
+        # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
+        self.feature_heads = nn.ModuleList()
+        feature_heads_dims = hparams["feature_heads_dims"]
+        for i in range(self.out_features):
+            feature_head = nn.Sequential()
+            current_dim = 4 * self.n_qubits
+            for j, hidden_dim in enumerate(feature_heads_dims):
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
+                )
+                feature_head.add_module(f"feature_head_{i}_fc_{j}_act", self.act)
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(self.dropout_val)
+                )
+                current_dim = hidden_dim
+            feature_head.add_module(
+                f"feature_head_{i}_fc_last", nn.Linear(current_dim, 2)
+            )  # output mu and sigma^2
+            self.feature_heads.append(feature_head)
+        self.softplus = nn.Softplus(beta=1.0, threshold=20.0)
+
+        # Optional: initialize projector small to avoid huge angles at start
+        with torch.no_grad():
+            if hasattr(self.projector, "weight"):
+                self.projector.weight.mul_(0.1)
+            if hasattr(self.projector, "bias") and self.projector.bias is not None:
+                self.projector.bias.zero_()
+
+    def forward(self, x):
+        """
+        x: (batch, channels, seq_len)
+        """
+        x = self.normalizer(x)
+        x = x.unsqueeze(1)  # add channel dim
+        z = self.cnn_encoder(x)  # (B, C, L')
+
+        # Global average & max pooling
+        avg_pool = torch.mean(z, dim=-1)
+        max_pool, _ = torch.max(z, dim=-1)
+        cnn_enc = torch.cat([avg_pool, max_pool], dim=1)
+
+        fc_enc = self.fc_encoder(x.squeeze(1))  # (B, hidden_dim)
+
+        enc = cnn_enc + fc_enc
+
+        angles = self.projector(enc)  # project to n_qubits
+        angles = torch.tanh(angles) * np.pi  # map to [-pi, pi]
+        # q_feats = self.qlayer(angles)  # [B, q_out]
+        # q_feats = torch.stack([self.qlayer(a) for a in angles], dim=0)  # no batching
+        # q_feats = angles  # just use the angles as features, no quantum layer
+        q_feats = self.qlayer_substitute(angles)  # substitute quantum layer with linear layer
+
+        feature_outputs = []
+        for feature_head in self.feature_heads:
+            feature_output = feature_head(q_feats)
+            # apply softplus to the second output (sigma^2)
+            feature_outputs.append(feature_output)
+
+        mus = torch.stack(
+            [fo[:, 0] for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+        sigmas2 = torch.stack(
+            [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
+
+    def reset_weights(self, generator=None):
+        """
+        Model has linear layers as well as convolutional layers.
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, generator=generator, gain=1.0)
+                # nn.init.kaiming_uniform(m.weight, generator=generator, a=0, nonlinearity="relu")
+                nn.init.zeros_(m.bias)
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_uniform_(
+                    m.weight, generator=generator, a=0, nonlinearity="relu"
+                )
+                nn.init.zeros_(m.bias)
+
+
+def test_QNN_01():
     data_dir = Path("data") / "cleaned_up_version"
     n_load = 500
 
@@ -350,6 +460,52 @@ if __name__ == "__main__":
     callbacks = [LearningRateMonitor(logging_interval="step")]
     trainer = L.Trainer(
         max_epochs=1,
+        # accelerator="gpu",
+        accelerator="cpu",
+        devices=1,
+        logger=logger,
+        callbacks=callbacks,
+    )
+    trainer.fit(model)
+    trainer.test(model)
+
+
+if __name__ == "__main__":
+    data_dir = Path("data") / "cleaned_up_version"
+    n_load = 5000
+
+    hparams = {
+        "model_class": QNN_01,
+        "data_dir": data_dir / "train_test_split",
+        "n_load_train": n_load,
+        "batch_size": 32,
+        "val_batch_size": 128,
+        "in_length": 51,
+        "n_out_features": 6,
+        "in_channels": 1,
+        "num_blocks": 3,
+        "base_channels": 64,
+        "cnn_enc_kernel_size": 7,
+        "cnn_enc_stride": 2,
+        "fc_enc_hidden_dims": [450],
+        "feature_heads_dims": [300, 500, 400],
+        "alpha": 1.0,
+        "dropout": 0.1,
+        "n_qubits": 8, # not used here for quantum, but for dimension reduction
+        "lr": 1e-3,
+    }
+
+    lit_logdir = Path("lightning_logs") / hparams["model_class"].__name__
+    logger = TensorBoardLogger(
+        lit_logdir,
+        name=hparams["model_class"].__name__,
+        default_hp_metric=False,
+        log_graph=True,
+    )
+    model = Model_Lit(hparams)
+    callbacks = [LearningRateMonitor(logging_interval="step")]
+    trainer = L.Trainer(
+        max_epochs=50,
         # accelerator="gpu",
         accelerator="cpu",
         devices=1,
