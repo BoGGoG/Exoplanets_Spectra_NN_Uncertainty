@@ -123,6 +123,9 @@ def make_quantum_layer_52_to_8(
       - Each chunk is encoded at its corresponding layer.
       - Each layer: Rot trainables + alternating entanglement + data re-uploading.
       - Measurements: X,Y,Z per qubit, plus ZZ correlators if needed.
+
+    Maximum number of outputs with 8 qubits is 3*8 + (8*7)/2 = 52.
+    Or more generally: 3*n_qubits + n_qubits*(n_qubits-1)/2.
     """
 
     dev = qml.device("default.qubit", wires=n_qubits)
@@ -164,29 +167,44 @@ def make_quantum_layer_52_to_8(
                 qml.RZ(chunks[l, i] * 0.5, wires=i)
 
         # build outputs
+        # outputs = []
+        # for i in range(n_qubits):
+        #     outputs.append(qml.expval(qml.PauliX(i)))
+        #     outputs.append(qml.expval(qml.PauliY(i)))
+        #     outputs.append(qml.expval(qml.PauliZ(i)))
+        #
+        # base = 3 * n_qubits
+        # if q_out > base:
+        #     extra_needed = q_out - base
+        #     k = 0
+        #     while k < extra_needed:
+        #         a = k % n_qubits
+        #         b = (a + 1) % n_qubits
+        #         outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
+        #         k += 1
         outputs = []
+        # 1. single-qubit Pauli X,Y,Z
         for i in range(n_qubits):
             outputs.append(qml.expval(qml.PauliX(i)))
             outputs.append(qml.expval(qml.PauliY(i)))
             outputs.append(qml.expval(qml.PauliZ(i)))
 
-        base = 3 * n_qubits
-        if q_out > base:
-            extra_needed = q_out - base
-            k = 0
-            while k < extra_needed:
-                a = k % n_qubits
-                b = (a + 1) % n_qubits
+        # 2. all unique ZZ correlators
+        n_outputs = 3 * n_qubits
+        for a in range(n_qubits):
+            for b in range(a + 1, n_qubits):
                 outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
-                k += 1
+                n_outputs += 1
+                if n_outputs >= q_out:  # don't compute more than needed
+                    return outputs[:q_out]
 
         return outputs[:q_out]
 
     # Test draw
-    x = torch.zeros(52)
-    w = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
-    qml.draw_mpl(circuit)(x, w)
-    plt.show()
+    # x = torch.zeros(52)
+    # w = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
+    # qml.draw_mpl(circuit)(x, w)
+    # plt.show()
 
     weight_shapes = {"weights": (n_layers, n_qubits, 3)}
     qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
@@ -358,12 +376,6 @@ class QNN_02(nn.Module):
         This QNN takes the full spectrum as input and inputs it to a quantum layer.
         The quantum layer cannot handle the full input with only 8 qubits, so we do
         a trick: We start with 8 inputs and at each layer we add 8 more as data re-uploading.
-
-        Args:
-            in_channels: number of input channels (features per timestep).
-            num_blocks: how many Conv blocks to stack.
-            base_channels: starting number of channels in first conv block.
-            hidden_dim: size of hidden layer in final MLP head.
         """
         super().__init__()
 
@@ -373,31 +385,36 @@ class QNN_02(nn.Module):
         self.input_length = hparams["in_length"]
         self.dropout_val = hparams["dropout"]
         self.enc = nn.Linear(self.input_length, self.input_length)
+        self.use_linear_encoder = hparams["use_linear_encoder"]
 
         # Quantum part
         self.n_qubits = hparams["n_qubits"]
         self.qlayer = make_quantum_layer_52_to_8(
-            n_qubits=self.n_qubits, n_layers=7, q_out=4 * self.n_qubits
+            n_qubits=self.n_qubits, n_layers=7, q_out=hparams["n_q_out"]
         )
         # linear block that mixes the outputs of the quantum layer a bit
         self.linear = nn.Sequential()
-        self.linear.add_module(
-            "linear_fc", nn.Linear(4 * self.n_qubits, 4 * self.n_qubits)
-        )
-        self.linear.add_module("linear_act", self.act)
-        self.linear.add_module("linear_dropout", nn.Dropout(self.dropout_val))
-        self.linear.add_module(
-            "linear_fc2", nn.Linear(4 * self.n_qubits, 4 * self.n_qubits)
-        )
-        self.linear.add_module("linear_act2", self.act)
-        self.linear.add_module("linear_dropout2", nn.Dropout(self.dropout_val))
+        self.enc_dim = hparams["encoding_dim"]
+        current_dim = hparams["n_q_out"]
+        for i in range(len(hparams["linear_dims"])):
+            self.linear.add_module(
+                f"linear_fc_{i}", nn.Linear(current_dim, hparams["linear_dims"][i])
+            )
+            self.linear.add_module(f"linear_fc_{i}_act", self.act)
+            self.linear.add_module(
+                f"linear_fc_{i}_dropout", nn.Dropout(self.dropout_val)
+            )
+            current_dim = hparams["linear_dims"][i]
+        self.linear.add_module("linear_fc_last", nn.Linear(current_dim, self.enc_dim))
+        self.linear.add_module("linear_fc_last_act", self.act)
+        self.linear.add_module("linear_fc_last_dropout", nn.Dropout(self.dropout_val))
 
         # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
         self.feature_heads = nn.ModuleList()
         feature_heads_dims = hparams["feature_heads_dims"]
         for i in range(self.out_features):
             feature_head = nn.Sequential()
-            current_dim = 4 * self.n_qubits
+            current_dim = self.enc_dim
             for j, hidden_dim in enumerate(feature_heads_dims):
                 feature_head.add_module(
                     f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
@@ -418,13 +435,13 @@ class QNN_02(nn.Module):
         x: (batch, seq_len)
         """
         x = self.normalizer(x)
-        x = self.enc(x)
+        if self.use_linear_encoder:
+            x = self.enc(x)
         angles = torch.tanh(x) * np.pi  # map to [-pi, pi]
         q_feats = torch.stack(
             [self.qlayer(a) for a in angles], dim=0
         )  # no batching, so loop over batch
         q_feats = self.linear(q_feats)
-        q_feats = self.act(q_feats)
 
         feature_outputs = []
         for feature_head in self.feature_heads:
@@ -711,7 +728,7 @@ def test_QNN_01():
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 5000
+    n_load = 500
 
     hparams = {
         "model_class": QNN_02,
@@ -721,13 +738,11 @@ if __name__ == "__main__":
         "val_batch_size": 128,
         "in_length": 51,
         "n_out_features": 6,
-        "in_channels": 1,
-        "num_blocks": 3,
-        "base_channels": 64,
-        "cnn_enc_kernel_size": 7,
-        "cnn_enc_stride": 2,
-        "fc_enc_hidden_dims": [450],
+        "linear_dims": [100, 100],
+        "encoding_dim": 52,
         "feature_heads_dims": [300, 500, 400],
+        "use_linear_encoder": False,
+        "n_q_out": 32,
         "alpha": 1.0,
         "dropout": 0.1,
         "n_qubits": 8,  # not used here for quantum, but for dimension reduction
