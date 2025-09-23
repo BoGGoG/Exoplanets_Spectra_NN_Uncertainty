@@ -17,8 +17,9 @@ from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
 from collections import namedtuple
 
-# from source.models.QNN import QNN_01
+# from source.models.QNN import QNN_02, QNN_03
 from torchvision.transforms.v2 import GaussianNoise
+from source.models.normalizers import MeanStdNormalizer
 
 
 # model output as named tuple instead of dict, because of some logging issues with dicts
@@ -35,22 +36,6 @@ activations = {
     "gelu": nn.GELU(),
     "silu": nn.SiLU(),
 }
-
-
-class MeanStdNormalizer:
-    """
-    Subtracts the mean and divides by the standard deviation for each spectrum.
-    This normalizes the spectra to have a mean of 0 and a standard deviation of
-    1.
-    """
-
-    def __init__(self, epsilon=1e-8):
-        self.epsilon = epsilon
-
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        mean = x.mean(dim=1, keepdim=True)
-        std = x.std(dim=1, keepdim=True)
-        return (x - mean) / (std + self.epsilon)
 
 
 class NLLLossMultivariate:
@@ -995,6 +980,7 @@ model_registry = {
     "CNNTimeSeriesRegressor": CNNTimeSeriesRegressor,
     "Model_03": Model_03,
     # "QNN_01": QNN_01,
+    # "QNN_02": QNN_02,
 }
 
 

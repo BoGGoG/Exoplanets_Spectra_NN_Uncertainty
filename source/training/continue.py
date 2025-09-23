@@ -22,7 +22,7 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
-from source.models.QNN import QNN_01
+from source.models.QNN import QNN_01, QNN_02
 
 torch.set_float32_matmul_precision("highest")  # or "high"
 
