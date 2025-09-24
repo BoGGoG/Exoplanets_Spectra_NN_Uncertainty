@@ -713,7 +713,7 @@ class Model_Lit(L.LightningModule):
             }
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams["lr"])
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=0.5, patience=5
+            optimizer, factor=0.5, patience=3
         )
         lr_scheduler_dic = {
             "scheduler": scheduler,

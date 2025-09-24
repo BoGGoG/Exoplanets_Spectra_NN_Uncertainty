@@ -257,9 +257,10 @@ def make_time_series_quantum_layer_01(
     memory_qubits = list(range(chunksize, n_qubits))
 
     print(f"{n_layers=}")
+    data_pairs = [(0, 1), (1, 2), (2, 3), (0, 2)]
 
     @qml.qnode(dev, interface="torch", diff_method=diff_method)
-    def circuit(inputs, weights, phi, reupload_scale):
+    def circuit(inputs, weights, phi, reupload_scale, data_entangles):
         # inputs: vector length 52
         # pad to multiple of n_qubits
         pad_len = math.ceil(len(inputs) / chunksize) * chunksize - len(inputs)
@@ -277,9 +278,11 @@ def make_time_series_quantum_layer_01(
                 qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
 
             # entangle data qubits in a ring
-            for i in range(len(data_qubits) - 1):
-                qml.CNOT(wires=[data_qubits[i], data_qubits[i + 1]])
-            qml.CNOT(wires=[data_qubits[-1], data_qubits[0]])
+            # for i in range(len(data_qubits) - 1):
+            #     qml.CNOT(wires=[data_qubits[i], data_qubits[i + 1]])
+            # qml.CNOT(wires=[data_qubits[-1], data_qubits[0]])
+            for p_idx, (a, b) in enumerate(data_pairs):
+                qml.IsingZZ(data_entangles[l, p_idx], wires=[a, b])
 
             # data re-uploading
             for i in data_qubits:
@@ -331,12 +334,13 @@ def make_time_series_quantum_layer_01(
         (n_layers, len(data_qubits), len(memory_qubits)), requires_grad=True
     )
     reupload_scales = torch.ones((n_layers, len(data_qubits)), requires_grad=True)
+    data_entangles = torch.zeros(((n_layers, len(data_pairs))), requires_grad=True)
     # qml.draw_mpl(circuit)(x, weights, phis, reupload_scales)
     # plt.show()
 
     # specs of the circuit
     specs_fun = qml.specs(circuit)
-    print(specs_fun(x, weights, phis, reupload_scales))
+    print(specs_fun(x, weights, phis, reupload_scales, data_entangles))
 
     weight_shapes = {
         "weights": (n_layers, n_qubits, 3),
@@ -349,6 +353,7 @@ def make_time_series_quantum_layer_01(
             n_layers,
             len(data_qubits),
         ),  # one scale factor per data qubit
+        "data_entangles": (n_layers, len(data_pairs)),
     }
     qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
     return qlayer
@@ -688,9 +693,11 @@ class QNN_03(nn.Module):
             if "reupload_scale" in name:
                 torch.nn.init.constant_(param, 1.0)  # start with scaling = 1
             elif "phi" in name:
-                torch.nn.init.normal_(param, mean=0.5, std=0.05)
+                torch.nn.init.normal_(param, mean=0.0, std=0.05)
+            elif "data_entangles" in name:
+                torch.nn.init.normal_(param, mean=0.0, std=0.02)  # tiny angles
             else:
-                torch.nn.init.uniform_(param, -0.1, 0.1)
+                torch.nn.init.normal_(param, mean=0.0, std=0.02)
 
     def forward(self, x):
         """
@@ -1037,13 +1044,13 @@ def test_QNN_02():
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 500
+    n_load = 5_000
 
     hparams = {
         "model_class": QNN_03,
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load,
-        "batch_size": 16,
+        "batch_size": 32,
         "val_batch_size": 128,
         "in_length": 51,
         "n_out_features": 6,
