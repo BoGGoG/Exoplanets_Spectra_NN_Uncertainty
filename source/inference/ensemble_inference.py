@@ -31,6 +31,7 @@ from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
 from source.utils import var_names
+from source.models.QNN import QNN_01
 
 
 def load_models(config):
@@ -144,7 +145,8 @@ if __name__ == "__main__":
     if predict:
         trainer = Trainer()
         predictions = []
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = "cpu"
         for m in models:
             m.to(device)
             m.scaler_mean = np.array(
