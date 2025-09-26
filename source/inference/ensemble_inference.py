@@ -31,7 +31,7 @@ from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
 from source.training.optimizers import cosine_decay_scheduler
 from source.utils import var_names
-from source.models.QNN import QNN_01
+from source.models.QNN import QNN_01, QNN_03
 
 
 def load_models(config):
@@ -50,6 +50,19 @@ def load_models(config):
         model = Model_Lit.load_from_checkpoint(checkpoint_path=ensemble_directory / m)
         models.append(model)
     return models
+
+
+def get_num_of_models(config):
+    model_class = config["MODEL"]["model_class"]
+    ensemble_directory = (
+        Path(config["ENSEMBLE_INFERENCE"]["ENSEMBLE_SAVEDIR"]) / "models" / "ckpt"
+    )
+    models_names = os.listdir(ensemble_directory)
+
+    # only files that end with .ckpt
+    models_names = [m for m in models_names if m.endswith(".ckpt")]
+
+    return len(models_names)
 
 
 class InferenceDataSet(Dataset):
@@ -121,6 +134,9 @@ if __name__ == "__main__":
     if predict:
         models = load_models(config)
         print(f"Loaded {len(models)} models for ensemble inference.")
+        n_models = len(models)
+    else:
+        n_models = get_num_of_models(config)
 
     inference_data_path = config["ENSEMBLE_INFERENCE"]["inference_data_path"]
     print(f"Loading inference data from {inference_data_path}")
@@ -134,7 +150,7 @@ if __name__ == "__main__":
     print(f"Loaded inference data with shape {spectra.shape}")
     inference_dataset = InferenceDataSet(spectra)
     inference_dataloader = DataLoader(
-        inference_dataset, batch_size=256, shuffle=False, drop_last=False
+        inference_dataset, batch_size=256, shuffle=False, drop_last=False, num_workers=4
     )
     predictions_dir = (
         Path(config["ENSEMBLE_INFERENCE"]["ENSEMBLE_SAVEDIR"]) / "test_predictions"
@@ -143,12 +159,13 @@ if __name__ == "__main__":
     predictions_path = predictions_dir / "ensemble_predictions.npz"
 
     if predict:
-        trainer = Trainer()
+        device = torch.device("cpu")
+        trainer = Trainer(accelerator="cpu")
         predictions = []
         # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        device = "cpu"
         for m in models:
             m.to(device)
+            m.eval()
             m.scaler_mean = np.array(
                 [
                     1190.83726355,
@@ -649,7 +666,9 @@ if __name__ == "__main__":
         if i_pred_var > 1:  # no ytick labels for all but first two plots
             axs[i_pred_var].set_yticklabels([])
 
-    plt.suptitle(r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {15} models")
+    plt.suptitle(
+        r"$n_\text{test}=$" + f"{y_test.shape[0]}, Ensemble of {n_models} models"
+    )
 
     plt.tight_layout()
     plt.subplots_adjust(wspace=0.2)

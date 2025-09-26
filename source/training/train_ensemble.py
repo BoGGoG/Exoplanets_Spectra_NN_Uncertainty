@@ -26,6 +26,7 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 
 from source.IO import read_config
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, model_registry
+from source.models.QNN import QNN_03
 from source.training.optimizers import cosine_decay_scheduler
 import torch.nn.init as init
 import shutil
@@ -134,9 +135,10 @@ def train_ensemble_of_models(
         model.hparams["alpha"] = config.getfloat("MODEL", "alpha")
         model.alpha = model.hparams["alpha"]
         model.criterion.alpha = model.hparams["alpha"]
-        model.hparams["input_noise"] = config.getfloat("MODEL", "input_noise")
-        model.input_noise = model.hparams["input_noise"]
-        model.model.input_noise = model.hparams["input_noise"]
+        if config.getfloat("MODEL", "input_noise", fallback=None):
+            model.hparams["input_noise"] = config.getfloat("MODEL", "input_noise")
+            model.input_noise = model.hparams["input_noise"]
+            model.model.input_noise = model.hparams["input_noise"]
 
         swa_lr = config.getfloat("ENSEMBLE", "swa_lr")
         swa_start = config.getint("ENSEMBLE", "swa_start")

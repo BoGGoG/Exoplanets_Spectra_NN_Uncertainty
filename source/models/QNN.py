@@ -260,7 +260,7 @@ def make_time_series_quantum_layer_01(
     data_pairs = [(0, 1), (1, 2), (2, 3), (0, 2)]
 
     @qml.qnode(dev, interface="torch", diff_method=diff_method)
-    def circuit(inputs, weights, phi, reupload_scale, data_entangles):
+    def circuit(inputs, weights, phi, reupload_scale, data_entangles, memory_entangles):
         # inputs: vector length 52
         # pad to multiple of n_qubits
         pad_len = math.ceil(len(inputs) / chunksize) * chunksize - len(inputs)
@@ -300,10 +300,18 @@ def make_time_series_quantum_layer_01(
                 for j, mq in enumerate(memory_qubits):
                     qml.CRY(phi[l, i, j], wires=[dq, mq])
 
-            # entangle memory qubits in a ring
-            for i in range(len(memory_qubits) - 1):
-                qml.CNOT(wires=[memory_qubits[i], memory_qubits[i + 1]])
-            qml.CNOT(wires=[memory_qubits[-1], memory_qubits[0]])
+            # entangle memory qubits in a ring with IsingZZ
+            # for i in range(len(memory_qubits) - 1):
+            #     qml.CNOT(wires=[memory_qubits[i], memory_qubits[i + 1]])
+            # qml.CNOT(wires=[memory_qubits[-1], memory_qubits[0]])
+            for i in range(len(memory_qubits)):
+                qml.IsingZZ(
+                    memory_entangles[l, i],
+                    wires=[
+                        memory_qubits[i],
+                        memory_qubits[(i + 1) % len(memory_qubits)],
+                    ],
+                )
 
             qml.Barrier(wires=data_qubits + memory_qubits, only_visual=True)
 
@@ -327,7 +335,7 @@ def make_time_series_quantum_layer_01(
 
         return outputs  # [52]
 
-    # Test draw
+    ## Test draw
     x = torch.zeros(51)
     weights = torch.zeros((n_layers, n_qubits, 3), requires_grad=True)
     phis = torch.zeros(
@@ -335,12 +343,22 @@ def make_time_series_quantum_layer_01(
     )
     reupload_scales = torch.ones((n_layers, len(data_qubits)), requires_grad=True)
     data_entangles = torch.zeros(((n_layers, len(data_pairs))), requires_grad=True)
-    # qml.draw_mpl(circuit)(x, weights, phis, reupload_scales)
-    # plt.show()
+    memory_entangles = torch.zeros(((n_layers, len(data_pairs))), requires_grad=True)
+
+    # figs = qml.draw_mpl(circuit, max_length=60)(
+    #     x, weights, phis, reupload_scales, data_entangles
+    # )
+    # for ii, f in enumerate(figs):
+    #     path = Path("figures") / f"quantum_circuit_time_series_01_{ii}.png"
+    #     path.parent.mkdir(parents=True, exist_ok=True)
+    #     f[0].savefig(path)
+    #     print(f"Saved circuit diagram to {path}")
 
     # specs of the circuit
     specs_fun = qml.specs(circuit)
-    print(specs_fun(x, weights, phis, reupload_scales, data_entangles))
+    print(
+        specs_fun(x, weights, phis, reupload_scales, data_entangles, memory_entangles)
+    )
 
     weight_shapes = {
         "weights": (n_layers, n_qubits, 3),
@@ -354,6 +372,7 @@ def make_time_series_quantum_layer_01(
             len(data_qubits),
         ),  # one scale factor per data qubit
         "data_entangles": (n_layers, len(data_pairs)),
+        "memory_entangles": (n_layers, len(data_pairs)),
     }
     qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
     return qlayer
@@ -693,9 +712,11 @@ class QNN_03(nn.Module):
             if "reupload_scale" in name:
                 torch.nn.init.constant_(param, 1.0)  # start with scaling = 1
             elif "phi" in name:
-                torch.nn.init.normal_(param, mean=0.0, std=0.05)
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)
             elif "data_entangles" in name:
-                torch.nn.init.normal_(param, mean=0.0, std=0.02)  # tiny angles
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)  # tiny angles
+            elif "memory_entangles" in name:
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)  # tiny angles
             else:
                 torch.nn.init.normal_(param, mean=0.0, std=0.02)
 
@@ -1075,16 +1096,16 @@ if __name__ == "__main__":
     model = Model_Lit(
         hparams
     )  # first need to load Model_Lit. Not loaded usually because of circular imports
-    callbacks = [LearningRateMonitor(logging_interval="step")]
-    trainer = L.Trainer(
-        max_epochs=50,
-        # accelerator="gpu",
-        accelerator="cpu",
-        devices=1,
-        logger=logger,
-        callbacks=callbacks,
-    )
-    trainer.fit(model)
-    trainer.test(model)
+    # callbacks = [LearningRateMonitor(logging_interval="step")]
+    # trainer = L.Trainer(
+    #     max_epochs=50,
+    #     # accelerator="gpu",
+    #     accelerator="cpu",
+    #     devices=1,
+    #     logger=logger,
+    #     callbacks=callbacks,
+    # )
+    # trainer.fit(model)
+    # trainer.test(model)
 
     # qlayer = make_time_series_quantum_layer_01(n_qubits=8, input_length=51)

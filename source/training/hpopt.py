@@ -19,7 +19,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from optuna.integration import PyTorchLightningPruningCallback
 
 from source.models.Model01 import CNNTimeSeriesRegressor, Model_Lit, Model_03
-from source.models.QNN import QNN_02
+from source.models.QNN import QNN_02, QNN_03
 from source.IO import read_config
 
 
@@ -84,6 +84,66 @@ def setup_QNN_02_hparams(
         "swa_start": swa_start,
         "max_norm_clip": max_norm_clip,
         # "activation": activation,
+    }
+
+    return hparams
+
+
+def setup_QNN_03_hparams(
+    trial: optuna.trial.Trial, config: configparser.ConfigParser
+) -> dict:
+    pass
+    n_load_train = config.getint("MODEL", "n_events_hpopt")
+    # epochs = config.getint("MODEL", "epochs_hpopt")
+    # rundir = config.get("DIRECTORIES", "rundir")
+    data_dir = Path("data") / "cleaned_up_version"
+
+    max_norm_clip = config.getfloat("MODEL", "max_norm_clip")
+
+    k_batchsize = trial.suggest_int(
+        "k_batchsize", 3, 6
+    )  # scale lr when scaling batchsize
+    swa_lrs = 1e-5
+    swa_start = config.getint("MODEL", "swa_start_hpopt")
+    dropout_val = trial.suggest_categorical("dropout_val", [0.1, 0.3, 0.5])
+    n_q_out = trial.suggest_int("n_q_out", 8, 52, step=4)
+    use_linear_encoder = trial.suggest_categorical("use_linear_encoder", [True, False])
+    n_linear_dims = trial.suggest_int("n_linear_dims", 1, 3)
+    linear_dims = []
+    for i in range(n_linear_dims):
+        linear_dims.append(trial.suggest_int(f"linear_dim_{i}", 50, 500, step=50))
+    feature_head_n_layers = trial.suggest_int("feature_head_n_layers", 1, 3)
+    feature_heads_dims = []
+    for i in range(feature_head_n_layers):
+        feature_heads_dims.append(
+            trial.suggest_int(f"feature_heads_dim_{i}", 50, 500, step=50)
+        )
+    encoding_dim = trial.suggest_int("encoding_dim", 52, 128, step=8)
+    # activation = trial.suggest_categorical(
+    #     "activation", ["relu", "leaky_relu", "elu", "gelu", "silu"]
+    # )
+    #
+
+    hparams = {
+        "model_class": config.get("MODEL", "model_class"),
+        "data_dir": data_dir / "train_test_split",
+        "n_load_train": n_load_train,
+        "batch_size": 2**k_batchsize,
+        "lr": 1e-3 * (2**k_batchsize) / 32,  # scale lr with batch size
+        "val_batch_size": 128,
+        "in_length": 51,
+        "n_out_features": 6,
+        "linear_dims": linear_dims,
+        "encoding_dim": encoding_dim,
+        "feature_heads_dims": feature_heads_dims,
+        "use_linear_encoder": use_linear_encoder,
+        # "n_q_out": 32,
+        "alpha": config.getfloat("MODEL", "alpha"),
+        "dropout": dropout_val,
+        "n_qubits": 8,  # not used here for quantum, but for dimension reduction
+        "swa_lrs": swa_lrs,
+        "swa_start": swa_start,
+        "max_norm_clip": max_norm_clip,
     }
 
     return hparams
@@ -214,6 +274,7 @@ model_hparams_registry = {
     "CNNTimeSeriesRegressor": setup_CNNTimeSeriesRegressor_hparams,
     "Model_03": setup_Model_03_hparams,
     "QNN_02": setup_QNN_02_hparams,
+    "QNN_03": setup_QNN_03_hparams,
 }
 
 

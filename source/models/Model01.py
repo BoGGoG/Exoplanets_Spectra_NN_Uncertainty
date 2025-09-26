@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 from source.IO import load_spectra
 from collections import namedtuple
 
-# from source.models.QNN import QNN_02, QNN_03
+# from source.models.QNN import QNN_02, QNN_03, QNN_01
 from torchvision.transforms.v2 import GaussianNoise
 from source.models.normalizers import MeanStdNormalizer
 
@@ -981,6 +981,7 @@ model_registry = {
     "Model_03": Model_03,
     # "QNN_01": QNN_01,
     # "QNN_02": QNN_02,
+    # "QNN_03": QNN_03,
 }
 
 
