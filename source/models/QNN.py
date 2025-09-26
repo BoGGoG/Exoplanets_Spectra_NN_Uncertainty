@@ -378,6 +378,124 @@ def make_time_series_quantum_layer_01(
     return qlayer
 
 
+def make_time_series_quantum_layer_02(
+    n_qubits: int = 7,
+    input_length: int = 7,
+    input_channels: int = 4,
+    diff_method: str = "best",
+):
+    """
+    Very different model. Takes input of shape [4, 7], where 4 is the channel dim and 7 is the length.
+    Every time step is encoded separately, but because there are 4 channels, we can encode 4 values at once.
+    """
+
+    dev = qml.device("default.qubit", wires=n_qubits)
+
+    data_qubits = list(range(input_channels))
+    memory_qubits = list(range(input_channels, n_qubits))
+    data_pairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
+
+    @qml.qnode(dev, interface="torch", diff_method=diff_method)
+    def circuit(inputs, weights, phi, reupload_scale, data_entangles, memory_entangles):
+        inputs = inputs.reshape(input_channels, input_length)
+
+        ##### main circuit part ####
+        for l in range(input_length):
+            # upload data
+            for i in data_qubits:
+                qml.RY(inputs[i, l], wires=i)
+
+            for i in data_qubits + memory_qubits:
+                qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
+
+            # ring entanglement
+            for p_idx, (a, b) in enumerate(data_pairs):
+                qml.IsingZZ(data_entangles[l, p_idx], wires=[a, b])
+
+            # data re-uploading
+            for i in data_qubits:
+                qml.RZ(inputs[i, l] * reupload_scale[l, i], wires=i)
+
+            for i in data_qubits:
+                qml.Rot(weights[l, i, 0], weights[l, i, 1], weights[l, i, 2], wires=i)
+
+            qml.Barrier(wires=data_qubits, only_visual=True)
+
+            # couple data qubits with memory qubits
+            for i, dq in enumerate(data_qubits):
+                for j, mq in enumerate(memory_qubits):
+                    # qml.CRY(phi[i, j], wires=[dq, mq])
+                    qml.IsingZZ(phi[l, i, j], wires=[dq, mq])
+
+            for i in range(len(memory_qubits)):
+                qml.IsingZZ(
+                    memory_entangles[l, i],
+                    wires=[
+                        memory_qubits[i],
+                        memory_qubits[(i + 1) % len(memory_qubits)],
+                    ],
+                )
+
+            qml.Barrier(wires=data_qubits + memory_qubits, only_visual=True)
+
+        # done with most of the circuit, now just read out
+        outputs = []
+        # 1. single-qubit Pauli X,Y,Z
+        for i in range(n_qubits):  # this is ugly ...
+            outputs.append(qml.expval(qml.PauliX(i)))
+            outputs.append(qml.expval(qml.PauliY(i)))
+            outputs.append(qml.expval(qml.PauliZ(i)))
+
+        # 2. all unique ZZ correlators
+        for a in range(n_qubits):
+            for b in range(a + 1, n_qubits):
+                outputs.append(qml.expval(qml.PauliZ(a) @ qml.PauliZ(b)))
+
+        return outputs  # [52]
+
+    ## Test draw
+    x = torch.zeros(4, 7)
+    weights = torch.zeros((input_length, n_qubits, 3), requires_grad=True)
+    phis = torch.zeros(
+        (input_length, len(data_qubits), len(memory_qubits)), requires_grad=True
+    )
+    reupload_scales = torch.ones((input_length, len(data_qubits)), requires_grad=True)
+    data_entangles = torch.zeros((input_length, len(data_pairs)), requires_grad=True)
+    memory_entangles = torch.zeros((input_length, len(data_pairs)), requires_grad=True)
+
+    figs = qml.draw_mpl(circuit, max_length=60)(
+        x, weights, phis, reupload_scales, data_entangles, memory_entangles
+    )
+    for ii, f in enumerate(figs):
+        path = Path("figures") / "QNN_04" / f"quantum_circuit_time_series_01_{ii}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f[0].savefig(path)
+        print(f"Saved circuit diagram to {path}")
+
+    # specs of the circuit
+    specs_fun = qml.specs(circuit)
+    print(
+        specs_fun(x, weights, phis, reupload_scales, data_entangles, memory_entangles)
+    )
+
+    weight_shapes = {
+        "weights": (input_length, n_qubits, 3),
+        "phi": (
+            input_length,
+            len(data_qubits),
+            len(memory_qubits),
+        ),  # one CRY angle per data→memory pair
+        "reupload_scale": (
+            input_length,
+            len(data_qubits),
+        ),  # one scale factor per data qubit
+        "data_entangles": (input_length, len(data_pairs)),
+        "memory_entangles": (input_length, len(data_pairs)),
+    }
+    qlayer = qml.qnn.TorchLayer(circuit, weight_shapes)
+    return qlayer
+
+
 class QNN_01(nn.Module):
     def __init__(
         self,
@@ -765,6 +883,130 @@ class QNN_03(nn.Module):
                 nn.init.zeros_(m.bias)
 
 
+class QNN_04(nn.Module):
+    def __init__(
+        self,
+        hparams: dict,
+        verbose: bool = False,
+    ):
+        """
+        First, a CNN reduces the input length from 51 to (8, channels).
+        Then, the QRNN takes the outputs of the CNN.
+        """
+        super().__init__()
+
+        self.out_features = hparams["n_out_features"]
+        self.act = nn.ELU()
+        self.normalizer = MeanStdNormalizer()
+        self.input_length = hparams["in_length"]
+        self.dropout_val = hparams["dropout"]
+        self.enc = nn.Linear(self.input_length, self.input_length)
+        self.use_linear_encoder = hparams["use_linear_encoder"]
+
+        # CNN part
+        self.cnn = nn.Sequential(
+            nn.Conv1d(
+                in_channels=1, out_channels=16, kernel_size=3, stride=2, padding=1
+            ),  # (B, 16, 26)
+            nn.BatchNorm1d(16),
+            nn.ELU(),
+            nn.Conv1d(
+                in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1
+            ),  # (B, 32, 13)
+            nn.BatchNorm1d(32),
+            nn.ELU(),
+            nn.Conv1d(
+                in_channels=32, out_channels=4, kernel_size=3, stride=2, padding=1
+            ),  # (B, 64, 7)
+            nn.BatchNorm1d(4),
+        )
+
+        # Quantum part
+        self.n_qubits = hparams["n_qubits"]
+        self.qlayer = make_time_series_quantum_layer_02(
+            n_qubits=self.n_qubits, input_length=7
+        )
+        # linear block that mixes the outputs of the quantum layer a bit
+        self.linear = nn.Sequential()
+        self.enc_dim = hparams["encoding_dim"]
+        current_dim = (
+            self.n_qubits * 3 + (self.n_qubits * (self.n_qubits - 1)) // 2
+        )  # X, Y, Z and ZZ correlators from QNN_04
+        for i in range(len(hparams["linear_dims"])):
+            self.linear.add_module(
+                f"linear_fc_{i}", nn.Linear(current_dim, hparams["linear_dims"][i])
+            )
+            self.linear.add_module(f"linear_fc_{i}_act", self.act)
+            self.linear.add_module(
+                f"linear_fc_{i}_dropout", nn.Dropout(self.dropout_val)
+            )
+            current_dim = hparams["linear_dims"][i]
+        self.linear.add_module("linear_fc_last", nn.Linear(current_dim, self.enc_dim))
+        self.linear.add_module("linear_fc_last_act", self.act)
+        self.linear.add_module("linear_fc_last_dropout", nn.Dropout(self.dropout_val))
+
+        # for each feature, make a separate MLP that outputs the mean mu and variance sigma2 (with softplus)
+        self.feature_heads = nn.ModuleList()
+        feature_heads_dims = hparams["feature_heads_dims"]
+        for i in range(self.out_features):
+            feature_head = nn.Sequential()
+            current_dim = self.enc_dim
+            for j, hidden_dim in enumerate(feature_heads_dims):
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}", nn.Linear(current_dim, hidden_dim)
+                )
+                feature_head.add_module(f"feature_head_{i}_fc_{j}_act", self.act)
+                feature_head.add_module(
+                    f"feature_head_{i}_fc_{j}_dropout", nn.Dropout(self.dropout_val)
+                )
+                current_dim = hidden_dim
+            feature_head.add_module(
+                f"feature_head_{i}_fc_last", nn.Linear(current_dim, 2)
+            )  # output mu and sigma^2
+            self.feature_heads.append(feature_head)
+        self.softplus = nn.Softplus(beta=1.0, threshold=20.0)
+
+        # custom init for quantum layer parameters
+        for name, param in self.qlayer.named_parameters():
+            if "reupload_scale" in name:
+                torch.nn.init.constant_(param, 0.5)  # start with scaling = 1
+            elif "phi" in name:
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)
+            elif "data_entangles" in name:
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)  # tiny angles
+            elif "memory_entangles" in name:
+                torch.nn.init.normal_(param, mean=np.pi / 4.0, std=0.05)  # tiny angles
+            else:
+                torch.nn.init.normal_(param, mean=0.0, std=0.02)
+
+    def forward(self, x):
+        """
+        x: (batch, seq_len)
+        """
+        x = self.normalizer(x)
+        cnn_out = self.cnn(x.unsqueeze(1))  # (B, 4, 7)
+        angles = torch.tanh(cnn_out) * np.pi  # map to [-pi, pi]
+        q_feats = torch.stack(
+            [self.qlayer(a.flatten()) for a in angles], dim=0
+        )  # no batching, so loop over batch
+        q_feats = self.linear(q_feats)
+
+        feature_outputs = []
+        for feature_head in self.feature_heads:
+            feature_output = feature_head(q_feats)
+            # apply softplus to the second output (sigma^2)
+            feature_outputs.append(feature_output)
+
+        mus = torch.stack(
+            [fo[:, 0] for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+        sigmas2 = torch.stack(
+            [self.softplus(fo[:, 1]) for fo in feature_outputs], dim=1
+        )  # shape: [batch, n_out_features]
+
+        return ModelOutput(mus=mus, sigmas2=sigmas2)
+
+
 class QNN_NoQ(nn.Module):
     def __init__(
         self,
@@ -1065,10 +1307,10 @@ def test_QNN_02():
 
 if __name__ == "__main__":
     data_dir = Path("data") / "cleaned_up_version"
-    n_load = 5_000
+    n_load = 1_000
 
     hparams = {
-        "model_class": QNN_03,
+        "model_class": QNN_04,
         "data_dir": data_dir / "train_test_split",
         "n_load_train": n_load,
         "batch_size": 32,
@@ -1082,7 +1324,7 @@ if __name__ == "__main__":
         # "n_q_out": 32,
         "alpha": 1.0,
         "dropout": 0.1,
-        "n_qubits": 8,  # not used here for quantum, but for dimension reduction
+        "n_qubits": 7,  # not used here for quantum, but for dimension reduction
         "lr": 1e-3,
     }
 
@@ -1096,16 +1338,16 @@ if __name__ == "__main__":
     model = Model_Lit(
         hparams
     )  # first need to load Model_Lit. Not loaded usually because of circular imports
-    # callbacks = [LearningRateMonitor(logging_interval="step")]
-    # trainer = L.Trainer(
-    #     max_epochs=50,
-    #     # accelerator="gpu",
-    #     accelerator="cpu",
-    #     devices=1,
-    #     logger=logger,
-    #     callbacks=callbacks,
-    # )
-    # trainer.fit(model)
-    # trainer.test(model)
+    callbacks = [LearningRateMonitor(logging_interval="step")]
+    trainer = L.Trainer(
+        max_epochs=50,
+        # accelerator="gpu",
+        accelerator="cpu",
+        devices=1,
+        logger=logger,
+        callbacks=callbacks,
+    )
+    trainer.fit(model)
+    trainer.test(model)
 
     # qlayer = make_time_series_quantum_layer_01(n_qubits=8, input_length=51)
